@@ -62,6 +62,53 @@ def build_xai_report(result: Result) -> dict[str, str]:
     }
 
 
+def render_report(result: Result, original_src: str) -> str:
+    report = build_xai_report(result)
+    logo_src = data_url(ASSETS / "logo.png")
+    heatmap_src = data_url(ASSETS / "sample_t2_mri.png")
+    return f'''
+    <section class="paper-report">
+      <header class="paper-header">
+        <div class="paper-title">NeuroLens <b>XAI</b> <span>Analysis Report</span></div>
+        <img src="{logo_src}" alt="NeuroLens">
+      </header>
+      <div class="paper-body">
+        <div class="paper-top">
+          <article class="paper-card">
+            <h3>♙　Patient Info</h3>
+            <div class="paper-table"><b>환자 ID</b><span>PT-2026-0417</span><b>검사일</b><span>2024-10-28</span><b>검사 유형</b><span>T2 MRI</span><b>판독 상태</b><span class="complete">자동 생성 완료</span></div>
+          </article>
+          <article class="paper-card disclaimer">
+            <h3>▣　AI 보조 판독 요약 <small>(AI Model Info &amp; Disclaimer)</small></h3>
+            <p>본 리포트는 AI 모델(3D-CNN + 3D-ResNet, CCA, WOA, M3d-CAM Ensemble) 기반의 분석 결과를 바탕으로 자동 생성되었습니다. 최종 판독 및 진단은 담당 전문의의 임상적 판단을 우선합니다.</p>
+            <div>AI 보조 시스템: NeuroLens v1.0</div>
+          </article>
+        </div>
+
+        <article class="paper-card xai-visual">
+          <h3>▥　XAI 시각화 <small>(M3d-CAM)</small></h3>
+          <div class="compare">
+            <figure><figcaption>원본 MRI (T2)</figcaption><div class="mri-frame original"><img src="{original_src}"></div></figure>
+            <figure><figcaption>AI 분석 결과 (M3d-CAM Heatmap)</figcaption><div class="heatmap-row"><div class="mri-frame"><img src="{heatmap_src}"></div><div class="legend"><span>높음</span><i></i><span>낮음</span></div></div></figure>
+          </div>
+        </article>
+
+        <article class="paper-card probability-card">
+          <h3>▤　AI 진단 확률 요약</h3>
+          <div class="paper-prob"><b>정상</b><i><em style="width:{result.normal}%;background:#1556c0"></em></i><strong style="color:#1556c0">{result.normal}%</strong></div>
+          <div class="paper-prob"><b>전구기</b><i><em style="width:{result.prodromal}%;background:#ff8c00"></em></i><strong style="color:#ff7800">{result.prodromal}%</strong></div>
+          <div class="paper-prob"><b>파킨슨병 의심</b><i><em style="width:{result.pd}%;background:#e91d2b"></em></i><strong style="color:#e91d2b">{result.pd}%</strong></div>
+        </article>
+
+        <article class="paper-card narrative">
+          <div class="ai-chip">AI</div><div><h3>핵심 판독 요약 <small>(RAG/LLM 기반)</small></h3>
+          <ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되어 임상적 임계치를 크게 초과하였으며, 의료진의 심층적 판단이 필요합니다.</li><li>{report['recommendation']}</li></ul></div>
+        </article>
+        <footer class="paper-footer"><div>▣　생성일시<br><b>2024-10-28 14:32</b></div><div>담당 전문의 서명　<span></span></div></footer>
+      </div>
+    </section>'''
+
+
 def css() -> None:
     st.markdown(
         """
@@ -84,9 +131,11 @@ def css() -> None:
 .pinfo,.model{display:grid;grid-template-columns:1fr auto;gap:10px 8px;font-size:10px}.pinfo dt,.model dt{color:#8194aa}.pinfo dd,.model dd{margin:0;color:#e2ebf5;text-align:right}.divider{grid-column:1/-1;height:1px;background:#1e3045;margin:3px 0}
 .prob{margin:10px 0 14px}.probline{display:flex;justify-content:space-between;font-size:10px;margin-bottom:6px}.track{height:5px;border-radius:20px;background:#1c2b3d;overflow:hidden}.fill{height:100%;border-radius:20px}.reason{margin-top:12px;padding:10px;border:1px solid #293c54;border-radius:5px;background:rgba(255,255,255,.025);font-size:9px;line-height:1.6;color:#b3c0d0}.reason b{display:block;color:#d8e4f0;font-size:10px;margin-bottom:4px}
 .finding{font-size:15px;padding:12px 14px;background:#061325;line-height:1.55}.warning{display:flex;gap:12px;padding:12px 14px;background:linear-gradient(90deg,#2b0f17,#1b0b12);border-top:1px solid #5a202a;color:#e5dce0;font-size:11px;line-height:1.7}.warning .warnicon{color:#ff3b49;font-size:19px}.warning strong{display:block;color:#ffe000}.status{text-align:right;color:#2bdbb2;font-size:9px;margin:9px 3px}
-.report-wrap{padding:15px;background:linear-gradient(145deg,#09192d,#071321)}
-.report-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #205b91;border-radius:99px;background:#092749;color:#65b7ff;font-size:9px;font-weight:700;letter-spacing:.04em;margin-bottom:11px}
-.report-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.report-section{padding:12px;border:1px solid #1d344e;border-radius:6px;background:rgba(2,11,22,.52)}.report-section h4{margin:0 0 7px;color:#4ba7ff;font-size:11px}.report-section p{margin:0;color:#c4d1df;font-size:11px;line-height:1.75}.report-foot{margin-top:10px;padding-top:9px;border-top:1px solid #1c3047;color:#70869e;font-size:9px}
+.paper-report{margin-top:10px;background:#fff;color:#101828;border-radius:8px;overflow:hidden;border:1px solid #b8cce4;box-shadow:0 15px 40px rgba(0,0,0,.28)}
+.paper-header{min-height:82px;display:flex;align-items:center;justify-content:space-between;padding:16px 30px;background:linear-gradient(100deg,#03133a,#001b4d);border-bottom:4px solid #238bff}.paper-header img{width:145px;max-height:58px;object-fit:contain}.paper-title{font-size:26px;font-weight:800;color:#fff}.paper-title b{color:#297eff}.paper-title span{font-weight:400}
+.paper-body{padding:20px}.paper-top{display:grid;grid-template-columns:1fr 1.08fr;gap:14px}.paper-card{border:1px solid #bfd0e4;border-radius:7px;padding:15px;background:#fff}.paper-card h3{margin:0 0 12px;color:#082966;font-size:17px}.paper-card h3 small{font-size:10px;font-weight:500}.paper-table{display:grid;grid-template-columns:42% 58%;font-size:12px}.paper-table>*{padding:8px 10px;border-bottom:1px dotted #c6d4e4}.paper-table b{background:#f6f8fb}.paper-table .complete{color:#076de0;font-weight:700}.disclaimer p{font-size:11px;line-height:1.9;margin:0}.disclaimer>div{text-align:right;font-size:11px;margin-top:15px}
+.xai-visual{margin-top:14px}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e6;border-radius:7px;padding:8px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:6px;padding:5px;font-size:11px;margin-bottom:7px}.mri-frame{height:310px;background:#02060b;border-radius:5px;overflow:hidden;display:flex;align-items:center;justify-content:center}.mri-frame img{width:100%;height:100%;object-fit:contain}.original img{filter:grayscale(1)}.heatmap-row{display:flex;gap:8px}.heatmap-row .mri-frame{flex:1}.legend{width:25px;display:flex;flex-direction:column;align-items:center;font-size:9px;gap:5px}.legend i{flex:1;width:17px;background:linear-gradient(#b90000,#ff7200,#ffe000,#25bca4,#064bb5)}
+.probability-card{margin-top:14px}.paper-prob{display:grid;grid-template-columns:120px 1fr 50px;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px dotted #cbd7e4;font-size:11px}.paper-prob i{height:9px;background:#edf0f4;border-radius:20px;overflow:hidden}.paper-prob em{display:block;height:100%;border-radius:20px}.paper-prob strong{font-size:14px;text-align:right}.narrative{display:flex;gap:18px;margin-top:14px}.ai-chip{width:58px;height:58px;flex:0 0 58px;border:3px solid #082966;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#082966}.narrative h3{margin-bottom:4px}.narrative ul{margin:5px 0;padding-left:20px;font-size:11px;line-height:1.75}.paper-footer{display:flex;justify-content:space-between;align-items:end;border-top:2px solid #0b2c68;margin-top:10px;padding:9px 12px 0;font-size:10px}.paper-footer span{display:inline-block;width:220px;border-bottom:1px solid #444}
 [data-testid="stFileUploader"]{background:#071628;border:1px dashed #2765a5;border-radius:7px;padding:4px}[data-testid="stFileUploader"] section{padding:10px!important}[data-testid="stFileUploader"] small{display:none}.stDownloadButton button{width:100%;background:#0c315e;border:1px solid #216db8;color:#e7f3ff;font-size:11px}.stButton button{width:100%;background:#0d2441;border:1px solid #27517f;color:#dbeafa}.stProgress>div>div{background:#218cff}.stSlider{padding:0 12px 3px;background:#04101d}
 @media(max-width:1100px){
   .block-container{padding:.45rem .55rem 1.5rem}
@@ -103,7 +152,7 @@ def css() -> None:
   .empty{min-height:390px}
   .pinfo,.model{font-size:12px}
   .probline{font-size:12px}.reason{font-size:11px}
-  .report-grid{grid-template-columns:1fr}
+  .paper-title{font-size:21px}.paper-top,.compare{grid-template-columns:1fr}.mri-frame{height:280px}
 }
 @media(max-width:650px){
   .topmeta{display:none}.topbar{justify-content:center}.brand{width:100%;justify-content:center}
@@ -111,6 +160,7 @@ def css() -> None:
   .mainview{min-height:320px;border-right:0;border-bottom:1px solid #263b53}
   .subviews{grid-template-columns:1fr 1fr;grid-template-rows:170px}
   .empty{min-height:330px}.finding{font-size:13px}.warning{font-size:10px}
+  .paper-header{padding:12px 16px}.paper-header img{width:100px}.paper-title{font-size:16px}.paper-body{padding:10px}.paper-card{padding:10px}.paper-prob{grid-template-columns:85px 1fr 42px}.narrative{gap:10px}.ai-chip{width:44px;height:44px;flex-basis:44px;font-size:17px}.paper-footer{align-items:start;gap:12px}.paper-footer span{width:90px}
 }
 </style>
 """,
@@ -193,17 +243,9 @@ with center_col:
             st.session_state.report_ready = True
 
         if st.session_state.get("report_ready"):
-            report = build_xai_report(result)
-            st.markdown(
-                '<section class="panel" style="margin-top:10px"><div class="head"><span class="i">✦</span>XAI 기반 AI 임상 리포트</div>'
-                '<div class="report-wrap"><div class="report-badge">● EXPLAINABLE AI · REPORT GENERATED</div><div class="report-grid">'
-                f'<article class="report-section"><h4>01　핵심 요약</h4><p>{report["summary"]}</p></article>'
-                f'<article class="report-section"><h4>02　모델 판단 근거</h4><p>{report["evidence"]}</p></article>'
-                f'<article class="report-section"><h4>03　신뢰도 및 한계</h4><p>{report["confidence"]}</p></article>'
-                f'<article class="report-section"><h4>04　권고 사항</h4><p>{report["recommendation"]}</p></article>'
-                '</div><div class="report-foot">AI GENERATED DRAFT · 의료진 검토 및 승인 전에는 최종 판독문으로 사용할 수 없습니다.</div></div></section>',
-                unsafe_allow_html=True,
-            )
+            report_html = render_report(result, main_src)
+            st.markdown(report_html, unsafe_allow_html=True)
+            st.download_button("↓ XAI 보고서 HTML 다운로드", report_html.encode("utf-8"), "NeuroLens_XAI_Report.html", "text/html", use_container_width=True)
 
 with info_col:
     patient = '<dl class="pinfo"><dt>ID</dt><dd>PT-2026-0477</dd><dt>생년월일/나이</dt><dd>김파킨 (M/64)</dd><dt>성별/연령</dt><dd>1960.03.15</dd><span class="divider"></span><dt>주요 병력</dt><dd>고혈압, Medication,<br>Syrtl, 특발성떨림</dd></dl>'
