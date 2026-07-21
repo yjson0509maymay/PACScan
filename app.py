@@ -40,6 +40,28 @@ def infer(_: BinaryIO) -> Result:
     return Result()
 
 
+def build_xai_report(result: Result) -> dict[str, str]:
+    """XAI 구조화 결과를 임상 문장으로 바꾸는 데모 어댑터."""
+    return {
+        "summary": (
+            f"본 T2 MRI 분석에서 파킨슨병 관련 영상 패턴이 {result.pd}%의 확률로 탐지되었습니다. "
+            "정상 및 전구기 가능성보다 파킨슨병 분류 점수가 우세합니다."
+        ),
+        "evidence": (
+            "설명가능성 맵의 주요 활성 영역은 양측 흑질에 집중되어 있습니다. "
+            "특히 도파민성 신경세포가 분포하는 영역에서 대칭적인 신호 및 형태 변화가 모델 판단에 가장 크게 기여했습니다."
+        ),
+        "confidence": (
+            "다중 뷰 특징이 동일한 방향의 결과를 보였으나, 현재 결과는 단일 영상 기반의 AI 보조 소견입니다. "
+            "영상 품질, 촬영 조건 및 환자의 임상 상태에 따라 확률이 달라질 수 있습니다."
+        ),
+        "recommendation": (
+            "운동 증상과 병력에 대한 신경과 전문의 평가를 권고합니다. 필요 시 DaT-SPECT 등 추가 검사 및 "
+            "추적 MRI 결과와 함께 종합적으로 검토하십시오."
+        ),
+    }
+
+
 def css() -> None:
     st.markdown(
         """
@@ -62,6 +84,9 @@ def css() -> None:
 .pinfo,.model{display:grid;grid-template-columns:1fr auto;gap:10px 8px;font-size:10px}.pinfo dt,.model dt{color:#8194aa}.pinfo dd,.model dd{margin:0;color:#e2ebf5;text-align:right}.divider{grid-column:1/-1;height:1px;background:#1e3045;margin:3px 0}
 .prob{margin:10px 0 14px}.probline{display:flex;justify-content:space-between;font-size:10px;margin-bottom:6px}.track{height:5px;border-radius:20px;background:#1c2b3d;overflow:hidden}.fill{height:100%;border-radius:20px}.reason{margin-top:12px;padding:10px;border:1px solid #293c54;border-radius:5px;background:rgba(255,255,255,.025);font-size:9px;line-height:1.6;color:#b3c0d0}.reason b{display:block;color:#d8e4f0;font-size:10px;margin-bottom:4px}
 .finding{font-size:15px;padding:12px 14px;background:#061325;line-height:1.55}.warning{display:flex;gap:12px;padding:12px 14px;background:linear-gradient(90deg,#2b0f17,#1b0b12);border-top:1px solid #5a202a;color:#e5dce0;font-size:11px;line-height:1.7}.warning .warnicon{color:#ff3b49;font-size:19px}.warning strong{display:block;color:#ffe000}.status{text-align:right;color:#2bdbb2;font-size:9px;margin:9px 3px}
+.report-wrap{padding:15px;background:linear-gradient(145deg,#09192d,#071321)}
+.report-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid #205b91;border-radius:99px;background:#092749;color:#65b7ff;font-size:9px;font-weight:700;letter-spacing:.04em;margin-bottom:11px}
+.report-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.report-section{padding:12px;border:1px solid #1d344e;border-radius:6px;background:rgba(2,11,22,.52)}.report-section h4{margin:0 0 7px;color:#4ba7ff;font-size:11px}.report-section p{margin:0;color:#c4d1df;font-size:11px;line-height:1.75}.report-foot{margin-top:10px;padding-top:9px;border-top:1px solid #1c3047;color:#70869e;font-size:9px}
 [data-testid="stFileUploader"]{background:#071628;border:1px dashed #2765a5;border-radius:7px;padding:4px}[data-testid="stFileUploader"] section{padding:10px!important}[data-testid="stFileUploader"] small{display:none}.stDownloadButton button{width:100%;background:#0c315e;border:1px solid #216db8;color:#e7f3ff;font-size:11px}.stButton button{width:100%;background:#0d2441;border:1px solid #27517f;color:#dbeafa}.stProgress>div>div{background:#218cff}.stSlider{padding:0 12px 3px;background:#04101d}
 @media(max-width:1100px){
   .block-container{padding:.45rem .55rem 1.5rem}
@@ -78,6 +103,7 @@ def css() -> None:
   .empty{min-height:390px}
   .pinfo,.model{font-size:12px}
   .probline{font-size:12px}.reason{font-size:11px}
+  .report-grid{grid-template-columns:1fr}
 }
 @media(max-width:650px){
   .topmeta{display:none}.topbar{justify-content:center}.brand{width:100%;justify-content:center}
@@ -131,6 +157,7 @@ if uploaded is not None and st.session_state.get("analyzed_file") != uploaded.na
             st.write("설명가능성 맵 생성")
             status.update(label="분석이 완료되었습니다.", state="complete", expanded=False)
     st.session_state.analyzed_file = uploaded.name
+    st.session_state.report_ready = False
 
 ready = uploaded is not None
 result = infer(uploaded) if ready else None
@@ -160,6 +187,23 @@ with center_col:
             '관련 전문의의 심층 검토를 권장합니다.</div></div></section>',
             unsafe_allow_html=True,
         )
+        if st.button("✦ XAI 임상 리포트 생성", use_container_width=True, type="primary"):
+            with st.spinner("영상 근거와 예측 결과를 임상 문장으로 정리하고 있습니다…"):
+                time.sleep(.7)
+            st.session_state.report_ready = True
+
+        if st.session_state.get("report_ready"):
+            report = build_xai_report(result)
+            st.markdown(
+                '<section class="panel" style="margin-top:10px"><div class="head"><span class="i">✦</span>XAI 기반 AI 임상 리포트</div>'
+                '<div class="report-wrap"><div class="report-badge">● EXPLAINABLE AI · REPORT GENERATED</div><div class="report-grid">'
+                f'<article class="report-section"><h4>01　핵심 요약</h4><p>{report["summary"]}</p></article>'
+                f'<article class="report-section"><h4>02　모델 판단 근거</h4><p>{report["evidence"]}</p></article>'
+                f'<article class="report-section"><h4>03　신뢰도 및 한계</h4><p>{report["confidence"]}</p></article>'
+                f'<article class="report-section"><h4>04　권고 사항</h4><p>{report["recommendation"]}</p></article>'
+                '</div><div class="report-foot">AI GENERATED DRAFT · 의료진 검토 및 승인 전에는 최종 판독문으로 사용할 수 없습니다.</div></div></section>',
+                unsafe_allow_html=True,
+            )
 
 with info_col:
     patient = '<dl class="pinfo"><dt>ID</dt><dd>PT-2026-0477</dd><dt>생년월일/나이</dt><dd>김파킨 (M/64)</dd><dt>성별/연령</dt><dd>1960.03.15</dd><span class="divider"></span><dt>주요 병력</dt><dd>고혈압, Medication,<br>Syrtl, 특발성떨림</dd></dl>'
