@@ -8,7 +8,7 @@ from typing import BinaryIO
 
 import streamlit as st
 
-from preprocessing_adapter import preprocess_nifti, validate_nifti
+from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, validate_nifti
 
 
 ROOT = Path(__file__).parent
@@ -85,39 +85,47 @@ for key, default in {"pipeline_done": False, "view": "원본 MRI", "source_name"
 nav, center, info = st.columns([.82, 5.15, 1.5], gap="small")
 with nav:
     st.markdown('<div class="panel pad"><div class="side-item">▣　진단뷰어</div><div class="side-item active">▤　분석도구</div><div class="side-item">▧　임상노트</div><div class="side-item">⚙　설정</div><div class="side-gap"></div></div>', unsafe_allow_html=True)
-    sample_path = ASSETS / "sample_t2_mri.nii.gz"
+    sample_path = ASSETS / "PACScan_sample_DICOM_folder.zip"
     if sample_path.exists():
-        st.download_button("↓ 예시 NIfTI 받기", sample_path.read_bytes(), "NeuroLens_sample_T2_MRI.nii.gz", "application/gzip")
-    uploaded = st.file_uploader("T2 MRI NIfTI 업로드", type=["nii", "gz"], help="3D .nii 또는 .nii.gz, 최대 200MB")
-    st.markdown('<div class="hint">업로드 즉시 형식과 크기를 검사합니다.<br>실행 버튼은 한 개만 사용합니다.</div>', unsafe_allow_html=True)
+        st.download_button("↓ 예시 DICOM 폴더 받기", sample_path.read_bytes(), "PACScan_sample_DICOM_folder.zip", "application/zip")
+    uploaded_files = st.file_uploader("환자 T2 MRI DICOM 폴더 선택", accept_multiple_files="directory", help="환자 한 명의 DICOM 파일이 들어 있는 폴더를 선택하세요.")
+    st.markdown('<div class="hint">예시는 ZIP 압축을 푼 뒤 폴더를 선택하세요.<br>DICOM 시리즈를 자동 분류하고 T2를 선택합니다.</div>', unsafe_allow_html=True)
 
-payload = uploaded.getvalue() if uploaded else None
-validation = validate_nifti(payload, uploaded.name) if uploaded else None
-if uploaded and st.session_state.source_name != uploaded.name:
+file_items = [(file.name, file.getvalue()) for file in uploaded_files] if uploaded_files else []
+folder_scan = inspect_dicom_folder(file_items) if file_items else None
+folder_signature = "|".join(f"{name}:{len(payload)}" for name, payload in file_items)
+if file_items and st.session_state.source_name != folder_signature:
     st.session_state.pipeline_done = False
-    st.session_state.source_name = uploaded.name
+    st.session_state.source_name = folder_signature
     st.session_state.pop("prep", None)
 
-step_state = 0 if not uploaded else (4 if st.session_state.pipeline_done else 1)
+step_state = 0 if not file_items else (4 if st.session_state.pipeline_done else 1)
 with center:
-    labels = ("1　NIfTI 업로드", "2　전처리", "3　AI 분석", "4　XAI 보고서")
+    labels = ("1　DICOM 폴더", "2　변환·전처리", "3　AI 분석", "4　XAI 보고서")
     steps = "".join(f'<div class="step {"done" if i < step_state else "active" if i == step_state else ""}">{label}</div>' for i, label in enumerate(labels))
     if not st.session_state.pipeline_done:
         st.markdown(f'<div class="stepper">{steps}</div>', unsafe_allow_html=True)
 
-    if not uploaded:
-        st.markdown('<section class="panel"><div class="empty"><div class="brain">🧠</div><b>T2 MRI 분석 대기 중</b><small>왼쪽에서 예시 NIfTI를 내려받거나<br>3D T2 MRI 파일을 업로드하세요.</small></div></section>', unsafe_allow_html=True)
-    elif not validation.valid:
-        st.markdown(f'<div class="validation error">✕　{validation.message}</div>', unsafe_allow_html=True)
+    if not file_items:
+        st.markdown('<section class="panel"><div class="empty"><div class="brain">🧠</div><b>T2 MRI 분석 대기 중</b><small>왼쪽에서 환자 한 명의 DICOM 폴더를 선택하세요.<br>여러 시리즈가 있어도 T2 시리즈를 자동으로 찾습니다.</small></div></section>', unsafe_allow_html=True)
+    elif not folder_scan.valid:
+        st.markdown(f'<div class="validation error">✕　{folder_scan.message}</div>', unsafe_allow_html=True)
     elif not st.session_state.pipeline_done:
-        st.markdown(f'<div class="validation">✓　{validation.message}<div class="file-grid"><div><small>파일명</small><b>{validation.filename}</b></div><div><small>크기</small><b>{validation.size_mb:.2f} MB</b></div><div><small>Volume shape</small><b>{validation.shape}</b></div><div><small>Spacing / 방향</small><b>{validation.spacing} · {validation.orientation}</b></div></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="validation">✓　{folder_scan.message}<div class="file-grid"><div><small>전체 파일</small><b>{folder_scan.total_files}개</b></div><div><small>DICOM / 시리즈</small><b>{folder_scan.dicom_files}개 / {folder_scan.series_count}개</b></div><div><small>선택 T2 시리즈</small><b>{folder_scan.selected_description}</b></div><div><small>환자 ID / 슬라이스</small><b>{folder_scan.patient_id} · {folder_scan.selected_files}장</b></div></div></div>', unsafe_allow_html=True)
         st.write("")
         if st.button("분석 시작", type="primary", use_container_width=True):
-            progress = st.progress(0, text="NIfTI 무결성 검사")
-            time.sleep(.25); progress.progress(22, text="RAS 방향 표준화")
-            time.sleep(.25); progress.progress(48, text="Intensity 정규화")
-            prep = preprocess_nifti(payload, uploaded.name)
-            progress.progress(76, text="56×56×56 리사이즈 및 QC")
+            progress = st.progress(0, text="DICOM 시리즈 무결성 검사")
+            time.sleep(.2); progress.progress(18, text="T2 시리즈 정렬")
+            nifti_payload, nifti_name = convert_dicom_folder(file_items, folder_scan.selected_uid)
+            nifti_validation = validate_nifti(nifti_payload, nifti_name)
+            if not nifti_validation.valid:
+                st.error(nifti_validation.message)
+                st.stop()
+            progress.progress(38, text="DICOM → 3D NIfTI 변환")
+            time.sleep(.2); progress.progress(54, text="RAS 방향 표준화")
+            time.sleep(.2); progress.progress(68, text="Intensity 정규화")
+            prep = preprocess_nifti(nifti_payload, nifti_name)
+            progress.progress(82, text="56×56×56 리사이즈 및 QC")
             time.sleep(.25); progress.progress(92, text="AI 분석 화면 준비 (데모 모델)")
             time.sleep(.2); progress.progress(100, text="완료")
             st.session_state.prep = prep

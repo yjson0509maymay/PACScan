@@ -14,10 +14,14 @@ from __future__ import annotations
 import base64
 import gzip
 import io
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
+import dicom2nifti
 import nibabel as nib
 import numpy as np
+import pydicom
 from PIL import Image
 from scipy.ndimage import zoom
 
@@ -35,6 +39,81 @@ class ValidationResult:
     shape: tuple[int, ...] = ()
     spacing: tuple[float, ...] = ()
     orientation: str = "-"
+
+
+@dataclass(frozen=True)
+class DicomFolderResult:
+    valid: bool
+    message: str
+    total_files: int
+    dicom_files: int
+    series_count: int
+    selected_uid: str = ""
+    selected_description: str = "-"
+    selected_files: int = 0
+    patient_id: str = "-"
+
+
+def inspect_dicom_folder(files: list[tuple[str, bytes]]) -> DicomFolderResult:
+    series: dict[str, dict] = {}
+    dicom_count = 0
+    for name, payload in files:
+        try:
+            ds = pydicom.dcmread(io.BytesIO(payload), stop_before_pixels=True, force=True)
+            uid = str(getattr(ds, "SeriesInstanceUID", ""))
+            if not uid or not getattr(ds, "SOPClassUID", None):
+                continue
+            dicom_count += 1
+            entry = series.setdefault(uid, {"files": [], "description": "", "protocol": "", "patient_id": "-"})
+            entry["files"].append(name)
+            entry["description"] = str(getattr(ds, "SeriesDescription", entry["description"]))
+            entry["protocol"] = str(getattr(ds, "ProtocolName", entry["protocol"]))
+            entry["patient_id"] = str(getattr(ds, "PatientID", entry["patient_id"]))
+        except Exception:
+            continue
+    if not series:
+        return DicomFolderResult(False, "폴더에서 유효한 DICOM 시리즈를 찾지 못했습니다.", len(files), 0, 0)
+
+    def score(item: tuple[str, dict]) -> tuple[int, int]:
+        text = f"{item[1]['description']} {item[1]['protocol']}".lower()
+        t2_score = 10 if "t2" in text else 0
+        if "flair" in text or "localizer" in text or "scout" in text:
+            t2_score -= 6
+        return t2_score, len(item[1]["files"])
+
+    selected_uid, selected = max(series.items(), key=score)
+    desc = selected["description"] or selected["protocol"] or "설명 없음"
+    has_t2 = "t2" in f"{selected['description']} {selected['protocol']}".lower()
+    message = "T2 DICOM 시리즈를 자동 선택했습니다." if has_t2 else "명시적인 T2 표기가 없어 슬라이스 수가 가장 많은 시리즈를 선택했습니다."
+    return DicomFolderResult(True, message, len(files), dicom_count, len(series), selected_uid, desc, len(selected["files"]), selected["patient_id"])
+
+
+def convert_dicom_folder(files: list[tuple[str, bytes]], selected_uid: str) -> tuple[bytes, str]:
+    with tempfile.TemporaryDirectory(prefix="neurolens_dicom_") as temp:
+        root = Path(temp)
+        source, output = root / "source", root / "nifti"
+        source.mkdir(); output.mkdir()
+        written = 0
+        for _, payload in files:
+            try:
+                ds = pydicom.dcmread(io.BytesIO(payload), stop_before_pixels=True, force=True)
+                if str(getattr(ds, "SeriesInstanceUID", "")) != selected_uid:
+                    continue
+                (source / f"slice_{written:05d}.dcm").write_bytes(payload)
+                written += 1
+            except Exception:
+                continue
+        if written < 2:
+            raise ValueError("3D 변환에 필요한 DICOM 슬라이스가 부족합니다.")
+        dicom2nifti.convert_directory(str(source), str(output), compression=True, reorient=True)
+        candidates = sorted(output.glob("*.nii.gz")) + sorted(output.glob("*.nii"))
+        if not candidates:
+            raise RuntimeError("DICOM 시리즈를 NIfTI로 변환하지 못했습니다.")
+        path = candidates[0]
+        payload = path.read_bytes()
+        if path.suffix.lower() == ".nii":
+            payload = gzip.compress(payload)
+        return payload, "patient_t2_converted.nii.gz"
 
 
 def _nifti_from_bytes(payload: bytes, filename: str) -> nib.Nifti1Image:

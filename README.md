@@ -8,9 +8,9 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-왼쪽의 **예시 NIfTI 받기**를 눌러 파일을 내려받은 뒤 `.nii` 또는 `.nii.gz` 업로드 영역에 넣고 **분석 시작**을 누르면 됩니다.
+왼쪽의 **예시 DICOM 폴더 받기**를 눌러 ZIP을 내려받아 압축을 푼 뒤, `환자 T2 MRI DICOM 폴더 선택`에서 압축을 푼 폴더를 선택하고 **분석 시작**을 누르면 됩니다.
 
-한 번의 실행으로 NIfTI 검증, RAS 방향 표준화, 비영 voxel Min-Max 정규화, 56³ 리사이즈가 실제 수행됩니다. 완료 후 `원본 MRI`, `전처리 결과`, `AI 분석`, `XAI 보고서` 뷰를 자유롭게 전환할 수 있습니다.
+폴더 안의 DICOM을 `SeriesInstanceUID`로 분류하고 `SeriesDescription`/`ProtocolName`에서 T2 시리즈를 자동 선택합니다. 한 번의 실행으로 DICOM→3D NIfTI 변환, NIfTI 검증, RAS 방향 표준화, 비영 voxel Min-Max 정규화, 56³ 리사이즈가 실제 수행됩니다. 완료 후 `원본 MRI`, `전처리 결과`, `AI 분석`, `XAI 보고서` 뷰를 자유롭게 전환할 수 있습니다.
 
 Streamlit Cloud 버전은 BRAINTENSOR 파이프라인 중 Python만으로 배포 가능한 단계를 연결합니다. FSL BET, ANTs N4 및 MNI 정합은 별도의 연구용 실행환경이 준비되면 연결해야 합니다. AI 분석 수치는 모델 학습 완료 전까지 데모입니다.
 

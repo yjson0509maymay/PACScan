@@ -1,5 +1,7 @@
-streamlit>=1.37,<2
+streamlit>=1.54,<2
 Pillow>=10.0
 nibabel>=5.3,<6
 numpy>=1.26,<3
 scipy>=1.12,<2
+pydicom>=3.0,<4
+dicom2nifti>=2.6,<3
