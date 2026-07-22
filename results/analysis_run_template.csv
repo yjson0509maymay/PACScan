@@ -1,0 +1,1 @@
+run_id,started_at,finished_at,patient_hash,input_type,dicom_count,series_count,selected_series,pipeline,pipeline_commit,bet_frac,normalization,bias_correction,target_shape,model_mode,model_version,status,elapsed_sec,error_step,error_message
