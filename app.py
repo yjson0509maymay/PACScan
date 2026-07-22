@@ -98,6 +98,7 @@ if file_items and st.session_state.source_name != folder_signature:
     st.session_state.pipeline_done = False
     st.session_state.source_name = folder_signature
     st.session_state.pop("prep", None)
+    st.session_state.pop("folder_scan", None)
 
 step_state = 0 if not file_items else (4 if st.session_state.pipeline_done else 1)
 with center:
@@ -129,6 +130,7 @@ with center:
             time.sleep(.25); progress.progress(92, text="AI 분석 화면 준비 (데모 모델)")
             time.sleep(.2); progress.progress(100, text="완료")
             st.session_state.prep = prep
+            st.session_state.folder_scan = folder_scan
             st.session_state.pipeline_done = True
             st.session_state.view = "전처리 결과"
             st.rerun()
@@ -163,13 +165,45 @@ with info:
     panel("환자정보", '<dl class="pinfo"><b>ID</b>　PT-2026-0477<br><br><b>성명/나이</b>　김파킨 (M/64)<br><br><b>검사</b>　T2 MRI</dl>', "●")
     st.write("")
     if st.session_state.pipeline_done:
+        active_view = st.session_state.view
+        prep = st.session_state.prep
+        active_scan = st.session_state.get("folder_scan", folder_scan)
         r = Result()
-        probs = probability("정상", r.normal, "#1a9d79") + probability("전구기", r.prodromal, "#e5a315") + probability("파킨슨병", r.pd, "#ff334b")
-        panel("분석 결과 · 시연용", probs + f'<div class="reason"><b>판단 근거</b><br>{r.rationale}</div>', "◉")
-        st.write("")
-        panel("전처리 상태", '<div class="reason">✓ NIfTI 검증<br>✓ RAS 표준화<br>✓ Min-Max 정규화<br>✓ 56³ 리사이즈<br>○ BET/N4/MNI 연구환경 대기</div>', "⌁")
+        if active_view == "원본 MRI":
+            source_info = (
+                f'<div class="reason"><b>선택 시리즈</b><br>{active_scan.selected_description}<br><br>'
+                f'<b>DICOM 슬라이스</b><br>{active_scan.selected_files}장<br><br>'
+                f'<b>변환 전 원본 크기</b><br>{prep["original_shape"]}<br><br>'
+                f'<b>Voxel spacing / 방향</b><br>{prep["spacing"]} · {prep["orientation"]}</div>'
+            )
+            panel("원본 영상 정보", source_info, "◈")
+        elif active_view == "전처리 결과":
+            preprocessing_status = (
+                '<div class="reason"><b>전처리 완료</b><br><br>'
+                '✓ DICOM → NIfTI 변환<br>'
+                '✓ 영상 방향 표준화<br>'
+                '✓ Min-Max 정규화<br>'
+                '✓ 56×56×56 리사이즈<br><br>'
+                f'<b>최종 출력</b><br>{prep["final_shape"]}</div>'
+            )
+            panel("전처리 상태", preprocessing_status, "⌁")
+        elif active_view == "AI 분석 (시연용)":
+            probs = probability("정상", r.normal, "#1a9d79") + probability("전구기", r.prodromal, "#e5a315") + probability("파킨슨병", r.pd, "#ff334b")
+            panel("분석 결과 · 시연용", probs + f'<div class="reason"><b>판단 근거</b><br>{r.rationale}</div>', "◉")
+            st.write("")
+            panel("AI 모델 상태", '<div class="reason"><b>현재 상태</b><br>모델 연결 전 시연용 결과<br><br><b>예정 모델</b><br>3D-CNN + 3D-ResNet<br>Multi-View Attention</div>', "▣")
+        else:
+            report_status = (
+                '<div class="reason"><b>보고서 생성 완료</b><br><br>'
+                '✓ 환자 및 검사 정보<br>'
+                '✓ XAI 시각화<br>'
+                '✓ 진단 확률 요약<br>'
+                '✓ 핵심 판독 요약<br><br>'
+                '<b>주의</b><br>현재 AI 결과는 시연용이며 전문의 검토 전 최종 판독문으로 사용할 수 없습니다.</div>'
+            )
+            panel("XAI 보고서 상태", report_status, "▤")
     else:
-        panel("분석 결과", '<div class="reason">분석 완료 후 결과가 표시됩니다.</div>', "◉")
+        panel("검사 대기", '<div class="reason">DICOM 폴더를 선택하고 분석을 시작하면 현재 화면에 맞는 정보가 표시됩니다.</div>', "◉")
     st.markdown('<div class="status">● 시스템 정상 · 전처리 준비 완료</div>', unsafe_allow_html=True)
 
 st.caption("본 서비스는 AI 진단 보조 프로토타입입니다. 최종 진단은 전문의의 판단을 따릅니다.")
