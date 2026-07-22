@@ -33,7 +33,7 @@ def panel(title: str, content: str, icon: str = "▣") -> None:
 
 
 def viewer_html(views: list[str], title: str, badge: str = "") -> str:
-    labels = ("Axial View", "Coronal View", "Sagittal View")
+    labels = ("축상면", "관상면", "시상면")
     cards = "".join(f'<figure><figcaption>{label}</figcaption><img src="{src}"></figure>' for label, src in zip(labels, views))
     return f'<section class="panel"><div class="head"><span>◈</span>{title}<b class="badge">{badge}</b></div><div class="tri-view">{cards}</div></section>'
 
@@ -42,12 +42,12 @@ def xai_report(result: Result, original_src: str) -> str:
     logo = data_url(ASSETS / "logo.png")
     heatmap = data_url(ASSETS / "sample_t2_mri.png")
     return f'''<section class="report">
-      <header><div>NeuroLens <b>XAI</b> <span>Analysis Report</span></div><img src="{logo}"></header>
-      <main><div class="report-top"><article><h3>♙ Patient Info</h3><dl><dt>환자 ID</dt><dd>PT-2026-0417</dd><dt>검사일</dt><dd>2024-10-28</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
-      <article><h3>▣ AI 보조 판독 요약 <small>(AI Model Info &amp; Disclaimer)</small></h3><p>본 리포트는 전처리 영상과 데모 XAI 결과를 바탕으로 자동 생성되었습니다. 모델 연결 전 시연 화면이며 최종 판독 및 진단은 담당 전문의의 판단을 우선합니다.</p><aside>AI 보조 시스템: NeuroLens v1.0</aside></article></div>
-      <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>AI 분석 결과 (Demo Heatmap)</figcaption><img src="{heatmap}"></figure></div></article>
+      <header><div>NeuroLens <b>XAI</b> <span>분석 보고서</span></div><img src="{logo}"></header>
+      <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>PT-2026-0417</dd><dt>검사일</dt><dd>2024-10-28</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
+      <article><h3>▣ AI 보조 판독 요약 <small>(AI 모델 정보 및 안내)</small></h3><p>본 리포트는 전처리 영상과 시연용 XAI 결과를 바탕으로 자동 생성되었습니다. 모델 연결 전 시연 화면이며 최종 판독 및 진단은 담당 전문의의 판단을 우선합니다.</p><aside>AI 보조 시스템: NeuroLens v1.0</aside></article></div>
+      <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>AI 분석 결과 (시연용 히트맵)</figcaption><img src="{heatmap}"></figure></div></article>
       <article><h3>▤ AI 진단 확률 요약</h3>{report_bar('정상', result.normal, '#1556c0')}{report_bar('전구기', result.prodromal, '#ff8c00')}{report_bar('파킨슨병 의심', result.pd, '#e91d2b')}</article>
-      <article class="narrative"><strong>AI</strong><div><h3>핵심 판독 요약 <small>(RAG/LLM 기반 데모)</small></h3><ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되었습니다.</li><li>임상 증상 및 추가 검사와 종합하여 전문의가 최종 판단해야 합니다.</li></ul></div></article>
+      <article class="narrative"><strong>AI</strong><div><h3>핵심 판독 요약 <small>(RAG/LLM 기반 시연용)</small></h3><ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되었습니다.</li><li>임상 증상 및 추가 검사와 종합하여 전문의가 최종 판단해야 합니다.</li></ul></div></article>
       <footer>▣ 생성일시　2024-10-28 14:32 <span>담당 전문의 서명　________________</span></footer></main></section>'''
 
 
@@ -77,7 +77,7 @@ st.markdown('''<style>
 
 
 logo = data_url(ASSETS / "logo.png")
-st.markdown(f'<header class="topbar"><div class="brand"><img src="{logo}"><span><b>MRI</b> 분석 대시보드</span></div><nav class="topnav"><span class="active">뉴로렌즈(AI) 분석 결과</span><span>환자관리</span></nav><div class="meta">Patient ID. PT-2026-0477<br>Scan Date. 2024.10.28</div></header>', unsafe_allow_html=True)
+st.markdown(f'<header class="topbar"><div class="brand"><img src="{logo}"><span><b>MRI</b> 분석 대시보드</span></div><nav class="topnav"><span class="active">뉴로렌즈(AI) 분석 결과</span><span>환자관리</span></nav><div class="meta">환자 ID. PT-2026-0477<br>검사일. 2024.10.28</div></header>', unsafe_allow_html=True)
 
 for key, default in {"pipeline_done": False, "view": "원본 MRI", "source_name": None}.items():
     st.session_state.setdefault(key, default)
@@ -135,7 +135,7 @@ with center:
     else:
         prep = st.session_state.prep
         st.markdown('<div style="color:#9db0c5;font-size:11px;margin:2px 0 7px">분석 완료 · 원하는 결과 화면을 선택해 비교하세요.</div>', unsafe_allow_html=True)
-        view_options = ["원본 MRI", "전처리 결과", "AI 분석 (데모)", "XAI 보고서"]
+        view_options = ["원본 MRI", "전처리 결과", "AI 분석 (시연용)", "XAI 보고서"]
         if st.session_state.view not in view_options:
             st.session_state.view = "원본 MRI"
         view = st.segmented_control("결과 화면 선택", view_options, default=st.session_state.view, selection_mode="single", label_visibility="collapsed") or st.session_state.view
@@ -144,14 +144,14 @@ with center:
         if view == "원본 MRI":
             st.markdown(viewer_html(prep["original_views"], "원본 T2 MRI", "업로드 원본"), unsafe_allow_html=True)
         elif view == "전처리 결과":
-            st.markdown(viewer_html(prep["processed_views"], "전처리 결과", "BRAINTENSOR CLOUD ADAPTER"), unsafe_allow_html=True)
+            st.markdown(viewer_html(prep["processed_views"], "전처리 결과", "BRAINTENSOR 전처리"), unsafe_allow_html=True)
             st.markdown(f'<div class="qc-grid"><div class="qc ok"><small>NIfTI 검증</small><b>✓ 통과</b></div><div class="qc ok"><small>Orientation</small><b>✓ {prep["orientation"]}</b></div><div class="qc ok"><small>Intensity</small><b>✓ Min-Max</b></div><div class="qc ok"><small>출력 Shape</small><b>✓ {prep["final_shape"]}</b></div></div>', unsafe_allow_html=True)
             st.download_button("↓ 전처리 NIfTI 다운로드", prep["output_bytes"], prep["output_name"], "application/gzip")
             st.info("Streamlit Cloud에서는 배포 가능한 전처리 단계가 실행됩니다. 연구용 전체 BET·N4·MNI 정합은 FSL/ANTs 실행환경 연결 후 활성화됩니다.")
-        elif view == "AI 분석 (데모)":
-            st.markdown('<div class="demo">⚠ 모델 학습 완료 전 디자인 확인용 데모 결과입니다. 실제 진단 결과가 아닙니다.</div>', unsafe_allow_html=True)
+        elif view == "AI 분석 (시연용)":
+            st.markdown('<div class="demo">⚠ 모델 학습 완료 전 디자인 확인용 시연 결과입니다. 실제 진단 결과가 아닙니다.</div>', unsafe_allow_html=True)
             demo_views = [data_url(ASSETS / "sample_t2_mri.png"), data_url(ASSETS / "coronal_result.png"), data_url(ASSETS / "sagittal_result.png")]
-            st.markdown(viewer_html(demo_views, "AI 병변 시각화", "M3d-CAM DEMO"), unsafe_allow_html=True)
+            st.markdown(viewer_html(demo_views, "AI 병변 시각화", "M3d-CAM 시연용"), unsafe_allow_html=True)
             st.markdown(f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
         else:
             original_src = prep["original_views"][0]
@@ -165,11 +165,11 @@ with info:
     if st.session_state.pipeline_done:
         r = Result()
         probs = probability("정상", r.normal, "#1a9d79") + probability("전구기", r.prodromal, "#e5a315") + probability("파킨슨병", r.pd, "#ff334b")
-        panel("분석 결과 · DEMO", probs + f'<div class="reason"><b>판단 근거</b><br>{r.rationale}</div>', "◉")
+        panel("분석 결과 · 시연용", probs + f'<div class="reason"><b>판단 근거</b><br>{r.rationale}</div>', "◉")
         st.write("")
         panel("전처리 상태", '<div class="reason">✓ NIfTI 검증<br>✓ RAS 표준화<br>✓ Min-Max 정규화<br>✓ 56³ 리사이즈<br>○ BET/N4/MNI 연구환경 대기</div>', "⌁")
     else:
         panel("분석 결과", '<div class="reason">분석 완료 후 결과가 표시됩니다.</div>', "◉")
-    st.markdown('<div class="status">● System Online · preprocessing-ready</div>', unsafe_allow_html=True)
+    st.markdown('<div class="status">● 시스템 정상 · 전처리 준비 완료</div>', unsafe_allow_html=True)
 
 st.caption("본 서비스는 AI 진단 보조 프로토타입입니다. 최종 진단은 전문의의 판단을 따릅니다.")
