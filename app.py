@@ -102,7 +102,8 @@ step_state = 0 if not uploaded else (4 if st.session_state.pipeline_done else 1)
 with center:
     labels = ("1　NIfTI 업로드", "2　전처리", "3　AI 분석", "4　XAI 보고서")
     steps = "".join(f'<div class="step {"done" if i < step_state else "active" if i == step_state else ""}">{label}</div>' for i, label in enumerate(labels))
-    st.markdown(f'<div class="stepper">{steps}</div>', unsafe_allow_html=True)
+    if not st.session_state.pipeline_done:
+        st.markdown(f'<div class="stepper">{steps}</div>', unsafe_allow_html=True)
 
     if not uploaded:
         st.markdown('<section class="panel"><div class="empty"><div class="brain">🧠</div><b>T2 MRI 분석 대기 중</b><small>왼쪽에서 예시 NIfTI를 내려받거나<br>3D T2 MRI 파일을 업로드하세요.</small></div></section>', unsafe_allow_html=True)
@@ -125,7 +126,11 @@ with center:
             st.rerun()
     else:
         prep = st.session_state.prep
-        view = st.segmented_control("결과 보기", ["원본 MRI", "전처리 결과", "AI 분석", "XAI 보고서"], default=st.session_state.view, selection_mode="single") or st.session_state.view
+        st.markdown('<div style="color:#9db0c5;font-size:11px;margin:2px 0 7px">분석 완료 · 원하는 결과 화면을 선택해 비교하세요.</div>', unsafe_allow_html=True)
+        view_options = ["원본 MRI", "전처리 결과", "AI 분석 (데모)", "XAI 보고서"]
+        if st.session_state.view not in view_options:
+            st.session_state.view = "원본 MRI"
+        view = st.segmented_control("결과 화면 선택", view_options, default=st.session_state.view, selection_mode="single", label_visibility="collapsed") or st.session_state.view
         st.session_state.view = view
         result = Result()
         if view == "원본 MRI":
@@ -135,7 +140,7 @@ with center:
             st.markdown(f'<div class="qc-grid"><div class="qc ok"><small>NIfTI 검증</small><b>✓ 통과</b></div><div class="qc ok"><small>Orientation</small><b>✓ {prep["orientation"]}</b></div><div class="qc ok"><small>Intensity</small><b>✓ Min-Max</b></div><div class="qc ok"><small>출력 Shape</small><b>✓ {prep["final_shape"]}</b></div></div>', unsafe_allow_html=True)
             st.download_button("↓ 전처리 NIfTI 다운로드", prep["output_bytes"], prep["output_name"], "application/gzip")
             st.info("Streamlit Cloud에서는 배포 가능한 전처리 단계가 실행됩니다. 연구용 전체 BET·N4·MNI 정합은 FSL/ANTs 실행환경 연결 후 활성화됩니다.")
-        elif view == "AI 분석":
+        elif view == "AI 분석 (데모)":
             st.markdown('<div class="demo">⚠ 모델 학습 완료 전 디자인 확인용 데모 결과입니다. 실제 진단 결과가 아닙니다.</div>', unsafe_allow_html=True)
             demo_views = [data_url(ASSETS / "sample_t2_mri.png"), data_url(ASSETS / "coronal_result.png"), data_url(ASSETS / "sagittal_result.png")]
             st.markdown(viewer_html(demo_views, "AI 병변 시각화", "M3d-CAM DEMO"), unsafe_allow_html=True)
