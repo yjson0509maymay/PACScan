@@ -1,0 +1,6 @@
+# 환자별 로컬 실행 기록과 의료영상은 GitHub에 올리지 않는다.
+results/runs/*
+!results/runs/.gitkeep
+__pycache__/
+*.pyc
+

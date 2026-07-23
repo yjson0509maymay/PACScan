@@ -9,10 +9,16 @@ from typing import BinaryIO
 import streamlit as st
 
 from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, validate_nifti
+from local_pipeline import APP_VERSION, local_pipeline_status, run_local_pipeline
 
 
 ROOT = Path(__file__).parent
 ASSETS = ROOT / "assets"
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def runtime_status():
+    return local_pipeline_status()
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,9 @@ with nav:
         st.download_button("↓ 예시 DICOM 폴더 받기", sample_path.read_bytes(), "PACScan_sample_DICOM_folder.zip", "application/zip")
     uploaded_files = st.file_uploader("환자 T2 MRI DICOM 폴더 선택", accept_multiple_files="directory", help="환자 한 명의 DICOM 파일이 들어 있는 폴더를 선택하세요.")
     st.markdown('<div class="hint">예시는 ZIP 압축을 푼 뒤 폴더를 선택하세요.<br>DICOM 시리즈를 자동 분류하고 T2를 선택합니다.</div>', unsafe_allow_html=True)
+    local_status = runtime_status()
+    mode_label = "실제 로컬 전처리" if local_status.ready else "클라우드 경량 전처리"
+    st.markdown(f'<div class="reason"><b>실행 모드</b><br>{mode_label}<br><small>PACScan v{APP_VERSION}</small></div>', unsafe_allow_html=True)
 
 file_items = [(file.name, file.getvalue()) for file in uploaded_files] if uploaded_files else []
 folder_scan = inspect_dicom_folder(file_items) if file_items else None
@@ -116,19 +125,33 @@ with center:
         st.write("")
         if st.button("분석 시작", type="primary", use_container_width=True):
             progress = st.progress(0, text="DICOM 시리즈 무결성 검사")
-            time.sleep(.2); progress.progress(18, text="T2 시리즈 정렬")
-            nifti_payload, nifti_name = convert_dicom_folder(file_items, folder_scan.selected_uid)
-            nifti_validation = validate_nifti(nifti_payload, nifti_name)
-            if not nifti_validation.valid:
-                st.error(nifti_validation.message)
+            if local_status.ready:
+                try:
+                    prep = run_local_pipeline(
+                        file_items, folder_scan, ROOT,
+                        progress=lambda value, text: progress.progress(value, text=text),
+                    )
+                except Exception as exc:
+                    st.error(f"실제 전처리 실패: {exc}")
+                    st.exception(exc)
+                    st.stop()
+            elif Path(local_status.script).is_file():
+                st.error(f"실제 전처리 환경이 아직 완성되지 않았습니다. {local_status.message}")
                 st.stop()
-            progress.progress(38, text="DICOM → 3D NIfTI 변환")
-            time.sleep(.2); progress.progress(54, text="RAS 방향 표준화")
-            time.sleep(.2); progress.progress(68, text="Intensity 정규화")
-            prep = preprocess_nifti(nifti_payload, nifti_name)
-            progress.progress(82, text="56×56×56 리사이즈 및 QC")
-            time.sleep(.25); progress.progress(92, text="AI 분석 화면 준비 (데모 모델)")
-            time.sleep(.2); progress.progress(100, text="완료")
+            else:
+                time.sleep(.2); progress.progress(18, text="T2 시리즈 정렬")
+                nifti_payload, nifti_name = convert_dicom_folder(file_items, folder_scan.selected_uid)
+                nifti_validation = validate_nifti(nifti_payload, nifti_name)
+                if not nifti_validation.valid:
+                    st.error(nifti_validation.message)
+                    st.stop()
+                progress.progress(38, text="DICOM → 3D NIfTI 변환")
+                time.sleep(.2); progress.progress(54, text="RAS 방향 표준화")
+                time.sleep(.2); progress.progress(68, text="Intensity 정규화")
+                prep = preprocess_nifti(nifti_payload, nifti_name)
+                prep.update(pipeline_mode="cloud_lightweight", pipeline_version="deployable_v1", run_id="session_only")
+                progress.progress(82, text="56×56×56 리사이즈 및 QC")
+                time.sleep(.25); progress.progress(100, text="경량 전처리 완료")
             st.session_state.prep = prep
             st.session_state.folder_scan = folder_scan
             st.session_state.pipeline_done = True
@@ -149,7 +172,10 @@ with center:
             st.markdown(viewer_html(prep["processed_views"], "전처리 결과", "BRAINTENSOR 전처리"), unsafe_allow_html=True)
             st.markdown(f'<div class="qc-grid"><div class="qc ok"><small>NIfTI 검증</small><b>✓ 통과</b></div><div class="qc ok"><small>Orientation</small><b>✓ {prep["orientation"]}</b></div><div class="qc ok"><small>Intensity</small><b>✓ Min-Max</b></div><div class="qc ok"><small>출력 Shape</small><b>✓ {prep["final_shape"]}</b></div></div>', unsafe_allow_html=True)
             st.download_button("↓ 전처리 NIfTI 다운로드", prep["output_bytes"], prep["output_name"], "application/gzip")
-            st.info("Streamlit Cloud에서는 배포 가능한 전처리 단계가 실행됩니다. 연구용 전체 BET·N4·MNI 정합은 FSL/ANTs 실행환경 연결 후 활성화됩니다.")
+            if prep.get("pipeline_mode") == "local_full":
+                st.success(f'BRAINTENSOR {prep.get("pipeline_version")} 실제 전처리 완료 · 실행 ID: {prep.get("run_id")} · {prep.get("elapsed_sec")}초')
+            else:
+                st.info("Streamlit Cloud 경량 전처리 결과입니다. 로컬 실행 시 BRAINTENSOR의 BET·ANTsPy/PD25 정합·Min-Max·56³ 전체 파이프라인을 사용합니다.")
         elif view == "AI 분석 (시연용)":
             st.markdown('<div class="demo">⚠ 모델 학습 완료 전 디자인 확인용 시연 결과입니다. 실제 진단 결과가 아닙니다.</div>', unsafe_allow_html=True)
             demo_views = [data_url(ASSETS / "sample_t2_mri.png"), data_url(ASSETS / "coronal_result.png"), data_url(ASSETS / "sagittal_result.png")]
@@ -178,11 +204,14 @@ with info:
             )
             panel("원본 영상 정보", source_info, "◈")
         elif active_view == "전처리 결과":
+            pipeline_label = "BRAINTENSOR ref21order_v1" if prep.get("pipeline_mode") == "local_full" else "클라우드 경량 전처리"
+            run_label = prep.get("run_id", "-")
             preprocessing_status = (
-                '<div class="reason"><b>전처리 완료</b><br><br>'
+                f'<div class="reason"><b>{pipeline_label}</b><br>실행 ID: {run_label}<br><br>'
                 '✓ DICOM → NIfTI 변환<br>'
-                '✓ 영상 방향 표준화<br>'
+                + ('✓ FSL BET 뇌 추출<br>✓ ANTsPy + PD25 정합<br>' if prep.get("pipeline_mode") == "local_full" else '✓ 영상 방향 표준화<br>') +
                 '✓ Min-Max 정규화<br>'
+                '✓ N4 보정 제외<br>'
                 '✓ 56×56×56 리사이즈<br><br>'
                 f'<b>최종 출력</b><br>{prep["final_shape"]}</div>'
             )
