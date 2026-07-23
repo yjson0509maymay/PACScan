@@ -18,7 +18,7 @@ ASSETS = ROOT / "assets"
 
 @st.cache_data(ttl=60, show_spinner=False)
 def runtime_status():
-    return local_pipeline_status()
+    return local_pipeline_status(ROOT)
 
 
 @dataclass(frozen=True)

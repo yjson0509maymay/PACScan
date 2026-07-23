@@ -20,9 +20,10 @@ from typing import Callable
 from preprocessing_adapter import preprocess_nifti
 
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 PIPELINE_VERSION = "ref21order_v1"
-DEFAULT_SCRIPT = Path(r"E:\해커톤\BRAINTENSOR\01_Preprocessing\스크립트\preparing_ref21order_v1.py")
+SCRIPT_RELATIVE_PATH = Path("01_Preprocessing") / "스크립트" / "preparing_ref21order_v1.py"
+DEFAULT_SCRIPT = Path(r"E:\해커톤\BRAINTENSOR") / SCRIPT_RELATIVE_PATH
 DEFAULT_ATLAS = Path(r"E:\ppmi_dti\derivatives\templates\templates\pd25_20170213\PD25-T1MPRAGE-template-1mm.nii.gz")
 DEFAULT_WSL_DISTRO = "Ubuntu-24.04"
 
@@ -39,6 +40,19 @@ class LocalPipelineStatus:
 
 def _configured_path(variable: str, default: Path) -> Path:
     return Path(os.environ.get(variable, str(default))).expanduser()
+
+
+def _discover_braintensor_script(app_root: Path | None = None) -> Path:
+    """Resolve env override first, then a sibling BRAINTENSOR checkout."""
+    configured = os.environ.get("PACSCAN_BRAINTENSOR_SCRIPT")
+    if configured:
+        return Path(configured).expanduser()
+    root = (app_root or Path(__file__).resolve().parent).resolve()
+    candidates = [
+        root.parent / "BRAINTENSOR" / SCRIPT_RELATIVE_PATH,
+        DEFAULT_SCRIPT,
+    ]
+    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
 
 def _has_antspyx() -> bool:
@@ -62,8 +76,8 @@ def _has_fsl_bet() -> bool:
         return False
 
 
-def local_pipeline_status() -> LocalPipelineStatus:
-    script = _configured_path("PACSCAN_BRAINTENSOR_SCRIPT", DEFAULT_SCRIPT)
+def local_pipeline_status(app_root: Path | None = None) -> LocalPipelineStatus:
+    script = _discover_braintensor_script(app_root)
     atlas = _configured_path("PACSCAN_PD25_ATLAS", DEFAULT_ATLAS)
     fsl_bet = _has_fsl_bet()
     antspyx = _has_antspyx()

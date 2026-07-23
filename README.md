@@ -18,6 +18,21 @@ Streamlit Cloud 버전은 BRAINTENSOR 파이프라인 중 Python만으로 배포
 
 ## 로컬 실제 전처리
 
+두 저장소를 같은 상위 폴더에 나란히 둡니다. PACScan은 실행 시 형제 폴더의
+`BRAINTENSOR/01_Preprocessing/스크립트/preparing_ref21order_v1.py`를 자동 탐색합니다.
+
+```text
+E:\해커톤\
+├─ PACScan\
+└─ BRAINTENSOR\
+```
+
+새 PC에서는 PACScan의 설치 스크립트로 두 저장소와 Python 의존성을 준비할 수 있습니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_local.ps1 -WorkspaceRoot E:\해커톤
+```
+
 ```powershell
 python -m pip install -r requirements-local.txt
 streamlit run app.py

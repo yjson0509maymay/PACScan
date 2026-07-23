@@ -4,4 +4,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.1.1,2026-07-22,UX,"한글 임상 용어 복원 및 반응형 화면 개선",deployable_v1,false,complete
 1.1.2,2026-07-22,UX,"메인 선택 화면에 따라 오른쪽 정보 패널 동기화",deployable_v1,false,complete
 1.2.0,2026-07-23,integration,"로컬 BRAINTENSOR ref21order_v1 전체 전처리 및 자동 실행 감사 로그 연결",ref21order_v1,false,implemented
-
+1.2.1,2026-07-23,integration,"PACScan 형제 BRAINTENSOR 저장소 자동 탐색 및 새 PC 설치 스크립트 추가",ref21order_v1,false,complete
