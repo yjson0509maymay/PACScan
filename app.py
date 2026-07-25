@@ -44,25 +44,29 @@ def viewer_html(views: list[str], title: str, badge: str = "") -> str:
     return f'<section class="panel"><div class="head"><span>◈</span>{title}<b class="badge">{badge}</b></div><div class="tri-view">{cards}</div></section>'
 
 
+def relative_slice_index(size: int, position_percent: int) -> int:
+    return round((max(size, 1) - 1) * max(0, min(position_percent, 100)) / 100)
+
+
 def interactive_mri_viewer(prep: dict, source: str) -> str:
     is_original = source == "original"
     shape = tuple(int(value) for value in (prep["original_shape"] if is_original else prep["final_shape"]))
-    prefix = "original" if is_original else "processed"
     labels = ("축상면", "관상면", "시상면")
     sizes = (shape[2], shape[1], shape[0])
     control_columns = st.columns(3, gap="small")
-    indices = []
+    positions = []
     for column, label, size in zip(control_columns, labels, sizes):
         with column:
-            indices.append(
+            positions.append(
                 st.slider(
-                    f"{label} 슬라이스",
+                    f"{label} 연동 위치 (%)",
                     min_value=0,
-                    max_value=max(size - 1, 0),
-                    value=max(size // 2, 0),
-                    key=f"{prefix}_{label}_slice",
+                    max_value=100,
+                    value=50,
+                    key=f"linked_{label}_position",
                 )
             )
+    indices = [relative_slice_index(size, position) for size, position in zip(sizes, positions)]
     payload_key = "original_bytes" if is_original else "processed_bytes"
     name_key = "original_name" if is_original else "processed_name"
     fallback_key = "original_views" if is_original else "processed_views"
@@ -71,7 +75,10 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
     else:
         views = prep[fallback_key]
     title = "원본 T2 MRI" if is_original else "전처리 결과"
-    badge = " · ".join(f"{label} {index + 1}/{size}" for label, index, size in zip(labels, indices, sizes))
+    badge = " · ".join(
+        f"{label} {index + 1}/{size} ({position}%)"
+        for label, index, size, position in zip(labels, indices, sizes, positions)
+    )
     return viewer_html(views, title, badge)
 
 
@@ -242,6 +249,7 @@ if file_items and st.session_state.source_name != folder_signature:
     for slice_key in (
         "original_축상면_slice", "original_관상면_slice", "original_시상면_slice",
         "processed_축상면_slice", "processed_관상면_slice", "processed_시상면_slice",
+        "linked_축상면_position", "linked_관상면_position", "linked_시상면_position",
     ):
         st.session_state.pop(slice_key, None)
 
@@ -303,10 +311,10 @@ with center:
         st.session_state.view = view
         result = Result()
         if view == "원본 MRI":
-            st.markdown('<div class="viewer-guide">슬라이더를 움직여 각 방향의 MRI 단면을 확인하세요.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="viewer-guide">원본과 전처리 결과가 같은 상대 위치로 연동됩니다. 슬라이더 위치는 화면을 전환해도 유지됩니다.</div>', unsafe_allow_html=True)
             st.markdown(interactive_mri_viewer(prep, "original"), unsafe_allow_html=True)
         elif view == "전처리 결과":
-            st.markdown('<div class="viewer-guide">슬라이더를 움직여 전처리된 3D MRI 단면을 확인하세요.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="viewer-guide">원본 MRI에서 선택한 상대 위치가 전처리 볼륨의 대응 슬라이스로 자동 변환됩니다.</div>', unsafe_allow_html=True)
             st.markdown(interactive_mri_viewer(prep, "processed"), unsafe_allow_html=True)
             st.markdown(f'<div class="qc-grid"><div class="qc ok"><small>NIfTI 검증</small><b>✓ 통과</b></div><div class="qc ok"><small>Orientation</small><b>✓ {prep["orientation"]}</b></div><div class="qc ok"><small>Intensity</small><b>✓ Min-Max</b></div><div class="qc ok"><small>출력 Shape</small><b>✓ {prep["final_shape"]}</b></div></div>', unsafe_allow_html=True)
             st.download_button("↓ 전처리 NIfTI 다운로드", prep["output_bytes"], prep["output_name"], "application/gzip")
