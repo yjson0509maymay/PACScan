@@ -60,7 +60,7 @@ def xai_report(result: Result, original_src: str, prep: dict) -> str:
       <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>PT-2026-0417</dd><dt>검사일</dt><dd>2024-10-28</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
       <article><h3>▣ AI 모델 <small>(분석 구성 및 현재 상태)</small></h3>
       <div class="model-info">
-        <div><b>전처리</b><span>{pipeline_name}<small>{pipeline_steps}<br>N4 bias correction 미사용 · 실행 ID {run_id}</small></span></div>
+        <div><b>전처리</b><span>{pipeline_name}<small>{pipeline_steps}<br>실행 ID {run_id}</small></span></div>
         <div><b>예정 모델</b><span>3D-CNN + 3D-ResNet<small>Multi-View Attention · M3d-CAM 설명 시각화</small></span></div>
         <div><b>현재 상태</b><span class="model-demo">모델 연결 전 · 시연용 결과<small>현재 확률과 판독문은 임상 진단 결과가 아닙니다.</small></span></div>
       </div>
@@ -225,7 +225,6 @@ with info:
                 '✓ DICOM → NIfTI 변환<br>'
                 + ('✓ FSL BET 뇌 추출<br>✓ ANTsPy + PD25 정합<br>' if prep.get("pipeline_mode") == "local_full" else '✓ 영상 방향 표준화<br>') +
                 '✓ Min-Max 정규화<br>'
-                '✓ N4 보정 제외<br>'
                 '✓ 56×56×56 리사이즈<br><br>'
                 f'<b>최종 출력</b><br>{prep["final_shape"]}</div>'
             )

@@ -9,3 +9,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.2.3,2026-07-26,UX,"XAI 보고서의 표·설명·확률·판독 요약·하단 정보 글자와 줄 간격 확대",ref21order_v1,false,complete
 1.2.4,2026-07-26,XAI,"중복된 AI 보조 판독 요약을 실제 전처리·예정 모델·연결 상태를 구분한 AI 모델 정보로 교체",ref21order_v1,false,complete
 1.2.5,2026-07-26,UX,"메인 및 XAI 보고서 NeuroLens 로고 확대와 헤더 높이·간격·모바일 비율 조정",ref21order_v1,false,complete
+1.2.6,2026-07-26,UX,"전처리 상태와 XAI 보고서에서 N4 미사용 문구 숨김; 실행 로그의 재현성 필드는 유지",ref21order_v1,false,complete
