@@ -180,11 +180,45 @@ def mask_patient_id(patient_id: str) -> str:
     return patient_id[:3] + "****" + patient_id[-3:]
 
 
+def filter_demo_patients(search_query: str, status_filter: str) -> list[str]:
+    normalized_query = search_query.strip().casefold()
+    return [
+        patient_id
+        for patient_id, item in DEMO_PATIENTS.items()
+        if (
+            not normalized_query
+            or normalized_query in patient_id.casefold()
+            or normalized_query in item["name"].casefold()
+            or normalized_query in item["condition"].casefold()
+        )
+        and (status_filter == "전체" or item["condition"] == status_filter)
+    ]
+
+
 def render_patient_management() -> None:
     st.markdown(
         '<div class="demo-notice">시연용 가상 환자 데이터입니다. 실제 개인정보나 임상 기록을 사용하지 않습니다.</div>',
         unsafe_allow_html=True,
     )
+    search_column, filter_column = st.columns([2.4, 1], gap="small")
+    with search_column:
+        search_query = st.text_input(
+            "환자 검색",
+            placeholder="이름, 환자 ID 또는 관리 상태 검색",
+            key="patient_search_query",
+        )
+    with filter_column:
+        status_filter = st.selectbox(
+            "관리 상태 필터",
+            ["전체"] + sorted({patient["condition"] for patient in DEMO_PATIENTS.values()}),
+            key="patient_status_filter",
+        )
+    filtered_patient_ids = filter_demo_patients(search_query, status_filter)
+    st.markdown(
+        f'<div class="filter-result">검색 결과 <b>{len(filtered_patient_ids)}</b>명 / 전체 {len(DEMO_PATIENTS)}명</div>',
+        unsafe_allow_html=True,
+    )
+
     select_column, action_column = st.columns([4, 1], gap="small")
     with select_column:
         selected_id = st.selectbox(
@@ -206,13 +240,16 @@ def render_patient_management() -> None:
     patient = DEMO_PATIENTS[selected_id]
     list_col, main_col, note_col = st.columns([1.15, 3.2, 1.45], gap="small")
     with list_col:
-        cards = "".join(
-            f'''<a href="?page=patients&amp;patient={patient_id}" class="patient-card {"selected" if patient_id == selected_id else ""}">
-            <div><b>{item["name"]}</b><span>{item["sex_age"]}</span></div>
-            <small>{patient_id}</small><em>{item["condition"]}</em>
-            <small>최근 검사 {item["last_exam"]}</small></a>'''
-            for patient_id, item in DEMO_PATIENTS.items()
-        )
+        if filtered_patient_ids:
+            cards = "".join(
+                f'''<a href="?page=patients&amp;patient={patient_id}" class="patient-card {"selected" if patient_id == selected_id else ""}">
+                <div><b>{DEMO_PATIENTS[patient_id]["name"]}</b><span>{DEMO_PATIENTS[patient_id]["sex_age"]}</span></div>
+                <small>{patient_id}</small><em>{DEMO_PATIENTS[patient_id]["condition"]}</em>
+                <small>최근 검사 {DEMO_PATIENTS[patient_id]["last_exam"]}</small></a>'''
+                for patient_id in filtered_patient_ids
+            )
+        else:
+            cards = '<div class="empty-patient-list">검색 조건에 맞는 환자가 없습니다.<br><small>검색어나 관리 상태를 변경해 주세요.</small></div>'
         panel("환자 목록", f'<div class="patient-list">{cards}</div>', "♙")
     with main_col:
         info = (
@@ -261,6 +298,7 @@ st.markdown('''<style>
 .topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{display:block;padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526;color:#edf5ff;text-decoration:none;transition:border-color .15s ease,background .15s ease,transform .15s ease}.patient-card:hover{border-color:#278fff;background:#0b223d;transform:translateY(-1px)}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
 .viewer-guide{margin:2px 0 8px;padding:8px 11px;border-left:3px solid #278fff;background:#07182a;color:#a9bdd2;font-size:11px}[data-testid="stSlider"]{padding:6px 10px 2px;border:1px solid #193550;border-radius:7px;background:#07172a}[data-testid="stSlider"] [data-testid="stWidgetLabel"] p{font-size:11px!important;color:#dcecff!important}
 .patient-action-label{height:28px;display:flex;align-items:flex-end;color:#9db0c5;font-size:11px;margin-bottom:5px}
+.filter-result{text-align:right;margin:-3px 2px 8px;color:#8298ad;font-size:10px}.filter-result b{color:#63b7ff}.empty-patient-list{padding:24px 10px;text-align:center;border:1px dashed #29425c;border-radius:7px;color:#8ea2b7;font-size:12px;line-height:1.7}.empty-patient-list small{color:#657b91}
 @media(max-width:1100px){div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="column"]{width:100%!important;flex:1 1 100%!important;min-width:100%!important}.topbar{flex-wrap:wrap}.topnav{order:3;width:100%;height:38px}.side-gap{display:none}.panel.pad{white-space:nowrap;overflow:auto}.side-item{display:inline-flex}.tri-view{grid-template-columns:1fr;grid-template-rows:auto}.tri-view figure:first-child{grid-row:auto;border-right:0}.tri-view figure{min-height:320px;border-bottom:1px solid #21374f}.tri-view figure:nth-child(n+2) img{max-height:320px}.report-top,.compare{grid-template-columns:1fr}}
 @media(max-width:650px){.topbar{min-height:64px;padding:8px 12px;gap:14px}.meta{display:none}.brand{font-size:17px;gap:9px}.brand img{width:110px;max-height:45px}.topnav{gap:13px;font-size:11px}.stepper{grid-template-columns:1fr 1fr}.file-grid,.qc-grid,.patient-profile{grid-template-columns:1fr 1fr}.report>header{min-height:72px;padding:12px;font-size:17px;gap:12px}.report header img{width:115px;max-height:48px}.report main{padding:9px}.compare img{height:230px}.rbar{grid-template-columns:78px 1fr 40px}.report footer{gap:10px}}
 </style>''', unsafe_allow_html=True)
