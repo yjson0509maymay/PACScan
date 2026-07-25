@@ -20,7 +20,7 @@ from typing import Callable
 from preprocessing_adapter import preprocess_nifti
 
 
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 PIPELINE_VERSION = "ref21order_v1"
 SCRIPT_RELATIVE_PATH = Path("01_Preprocessing") / "스크립트" / "preparing_ref21order_v1.py"
 DEFAULT_SCRIPT = Path(r"E:\해커톤\BRAINTENSOR") / SCRIPT_RELATIVE_PATH
