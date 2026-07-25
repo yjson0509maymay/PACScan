@@ -20,7 +20,7 @@ from typing import Callable
 from preprocessing_adapter import preprocess_nifti
 
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 PIPELINE_VERSION = "ref21order_v1"
 SCRIPT_RELATIVE_PATH = Path("01_Preprocessing") / "스크립트" / "preparing_ref21order_v1.py"
 DEFAULT_SCRIPT = Path(r"E:\해커톤\BRAINTENSOR") / SCRIPT_RELATIVE_PATH
@@ -160,6 +160,8 @@ def run_local_pipeline(
     folder_scan,
     app_root: Path,
     progress: Callable[[int, str], None] | None = None,
+    selected_patient_id: str = "",
+    patient_id_match: bool | None = None,
 ) -> dict:
     """Run GitHub BRAINTENSOR v1 and persist a complete per-run audit trail."""
     status = local_pipeline_status()
@@ -191,6 +193,8 @@ def run_local_pipeline(
         "pipeline_script": str(script),
         "pipeline_commit": _git_revision(braintensor_repo),
         "patient_hash": patient_hash,
+        "selected_app_patient_id": selected_patient_id,
+        "patient_id_match": patient_id_match,
         "input_type": "dicom_directory",
         "dicom_count": folder_scan.selected_files,
         "series_count": folder_scan.series_count,

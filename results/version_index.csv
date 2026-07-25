@@ -15,3 +15,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.4.1,2026-07-26,feature,"원본 MRI와 전처리 결과의 축상·관상·시상면 상대 위치를 0~100% 기준으로 연동",ref21order_v1,false,complete
 1.4.2,2026-07-26,feature,"원본·전처리 MRI 공통 50~250% 확대축소와 중앙 위치·100% 배율 보기 초기화 구현",ref21order_v1,false,complete
 1.5.0,2026-07-26,feature,"환자관리에서 선택한 가상 환자를 분석 헤더·우측 환자정보·XAI 보고서에 연동",ref21order_v1,false,complete
+1.5.1,2026-07-26,safety,"선택 환자와 업로드 DICOM PatientID 일치 여부 확인·마스킹 표시·불일치 경고 및 실행 감사로그 추가",ref21order_v1,false,complete

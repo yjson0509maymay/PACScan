@@ -147,6 +147,7 @@ def probability(label: str, value: int, color: str) -> str:
 DEMO_PATIENTS = {
     "PT-DEMO-001": {
         "name": "김뉴로", "sex_age": "M / 64", "birth": "1962.03.15",
+        "dicom_patient_id": "PACSCAN-DEMO-001",
         "phone": "010-****-1201", "condition": "파킨슨병 의심", "last_exam": "2026.07.23",
         "history": [("2026.07.23", "T2 MRI", "전처리 완료", "XAI 보고서 생성"),
                     ("2026.06.04", "외래 진료", "경과 관찰", "운동 증상 문진")],
@@ -154,6 +155,7 @@ DEMO_PATIENTS = {
     },
     "PT-DEMO-002": {
         "name": "이도파", "sex_age": "F / 58", "birth": "1968.11.02",
+        "dicom_patient_id": "PACSCAN-DEMO-002",
         "phone": "010-****-3827", "condition": "전구기 추적관찰", "last_exam": "2026.07.18",
         "history": [("2026.07.18", "T2 MRI", "분석 대기", "원본 영상 등록"),
                     ("2026.04.11", "신경학 검사", "추적관찰", "비운동 증상 문진")],
@@ -161,12 +163,21 @@ DEMO_PATIENTS = {
     },
     "PT-DEMO-003": {
         "name": "박정상", "sex_age": "M / 61", "birth": "1965.05.27",
+        "dicom_patient_id": "PACSCAN-DEMO-003",
         "phone": "010-****-7714", "condition": "정상 대조군", "last_exam": "2026.07.10",
         "history": [("2026.07.10", "T2 MRI", "QC 통과", "정상 범위 시연 결과"),
                     ("2026.03.20", "건강검진", "특이소견 없음", "정기검진")],
         "note": "시연용 정상 대조 환자입니다. 현재 등록된 임상 특이사항은 없습니다.",
     },
 }
+
+
+def mask_patient_id(patient_id: str) -> str:
+    if not patient_id or patient_id == "-":
+        return "확인 불가"
+    if len(patient_id) <= 6:
+        return patient_id[:1] + "****" + patient_id[-1:]
+    return patient_id[:3] + "****" + patient_id[-3:]
 
 
 def render_patient_management() -> None:
@@ -311,15 +322,28 @@ with center:
     elif not folder_scan.valid:
         st.markdown(f'<div class="validation error">✕　{folder_scan.message}</div>', unsafe_allow_html=True)
     elif not st.session_state.pipeline_done:
-        st.markdown(f'<div class="validation">✓　{folder_scan.message}<div class="file-grid"><div><small>전체 파일</small><b>{folder_scan.total_files}개</b></div><div><small>DICOM / 시리즈</small><b>{folder_scan.dicom_files}개 / {folder_scan.series_count}개</b></div><div><small>선택 T2 시리즈</small><b>{folder_scan.selected_description}</b></div><div><small>환자 ID / 슬라이스</small><b>{folder_scan.patient_id} · {folder_scan.selected_files}장</b></div></div></div>', unsafe_allow_html=True)
+        expected_dicom_id = selected_patient["dicom_patient_id"]
+        patient_id_matches = folder_scan.patient_id == expected_dicom_id
+        masked_dicom_id = mask_patient_id(folder_scan.patient_id)
+        st.markdown(f'<div class="validation">✓　{folder_scan.message}<div class="file-grid"><div><small>전체 파일</small><b>{folder_scan.total_files}개</b></div><div><small>DICOM / 시리즈</small><b>{folder_scan.dicom_files}개 / {folder_scan.series_count}개</b></div><div><small>선택 T2 시리즈</small><b>{folder_scan.selected_description}</b></div><div><small>DICOM 환자 ID / 슬라이스</small><b>{masked_dicom_id} · {folder_scan.selected_files}장</b></div></div></div>', unsafe_allow_html=True)
+        if patient_id_matches:
+            st.success(f"선택 환자 확인 완료 · {selected_patient_id}와 업로드 DICOM({masked_dicom_id})이 일치합니다.")
+        else:
+            st.warning(
+                f"환자정보 불일치 · 선택 환자 {selected_patient_id}와 업로드 DICOM({masked_dicom_id})이 다릅니다. "
+                "올바른 환자와 검사인지 확인한 뒤 진행하세요."
+            )
         st.write("")
-        if st.button("분석 시작", type="primary", use_container_width=True):
+        button_label = "분석 시작" if patient_id_matches else "불일치 확인 후 분석 시작"
+        if st.button(button_label, type="primary", use_container_width=True):
             progress = st.progress(0, text="DICOM 시리즈 무결성 검사")
             if local_status.ready:
                 try:
                     prep = run_local_pipeline(
                         file_items, folder_scan, ROOT,
                         progress=lambda value, text: progress.progress(value, text=text),
+                        selected_patient_id=selected_patient_id,
+                        patient_id_match=patient_id_matches,
                     )
                 except Exception as exc:
                     st.error(f"실제 전처리 실패: {exc}")
