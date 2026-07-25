@@ -7,3 +7,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.2.1,2026-07-23,integration,"PACScan 형제 BRAINTENSOR 저장소 자동 탐색 및 새 PC 설치 스크립트 추가",ref21order_v1,false,complete
 1.2.2,2026-07-26,UX,"하단 실행 상태를 업로드·원본·전처리·AI·XAI 화면별 문구와 색상으로 동기화",ref21order_v1,false,complete
 1.2.3,2026-07-26,UX,"XAI 보고서의 표·설명·확률·판독 요약·하단 정보 글자와 줄 간격 확대",ref21order_v1,false,complete
+1.2.4,2026-07-26,XAI,"중복된 AI 보조 판독 요약을 실제 전처리·예정 모델·연결 상태를 구분한 AI 모델 정보로 교체",ref21order_v1,false,complete
