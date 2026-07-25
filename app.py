@@ -79,6 +79,74 @@ def probability(label: str, value: int, color: str) -> str:
     return f'<div class="prob"><div><span>{label}</span><b>{value}%</b></div><i><em style="width:{value}%;background:{color}"></em></i></div>'
 
 
+DEMO_PATIENTS = {
+    "PT-DEMO-001": {
+        "name": "김뉴로", "sex_age": "M / 64", "birth": "1962.03.15",
+        "phone": "010-****-1201", "condition": "파킨슨병 의심", "last_exam": "2026.07.23",
+        "history": [("2026.07.23", "T2 MRI", "전처리 완료", "XAI 보고서 생성"),
+                    ("2026.06.04", "외래 진료", "경과 관찰", "운동 증상 문진")],
+        "note": "최근 보행 속도 저하와 안정 시 떨림을 호소함. MRI 분석 결과와 임상검사를 함께 검토할 예정입니다.",
+    },
+    "PT-DEMO-002": {
+        "name": "이도파", "sex_age": "F / 58", "birth": "1968.11.02",
+        "phone": "010-****-3827", "condition": "전구기 추적관찰", "last_exam": "2026.07.18",
+        "history": [("2026.07.18", "T2 MRI", "분석 대기", "원본 영상 등록"),
+                    ("2026.04.11", "신경학 검사", "추적관찰", "비운동 증상 문진")],
+        "note": "후각 저하와 수면행동 증상을 중심으로 추적관찰 중입니다. 다음 방문 시 MRI 비교 판독을 예정합니다.",
+    },
+    "PT-DEMO-003": {
+        "name": "박정상", "sex_age": "M / 61", "birth": "1965.05.27",
+        "phone": "010-****-7714", "condition": "정상 대조군", "last_exam": "2026.07.10",
+        "history": [("2026.07.10", "T2 MRI", "QC 통과", "정상 범위 시연 결과"),
+                    ("2026.03.20", "건강검진", "특이소견 없음", "정기검진")],
+        "note": "시연용 정상 대조 환자입니다. 현재 등록된 임상 특이사항은 없습니다.",
+    },
+}
+
+
+def render_patient_management() -> None:
+    st.markdown(
+        '<div class="demo-notice">시연용 가상 환자 데이터입니다. 실제 개인정보나 임상 기록을 사용하지 않습니다.</div>',
+        unsafe_allow_html=True,
+    )
+    selected_id = st.selectbox(
+        "환자 선택",
+        list(DEMO_PATIENTS),
+        format_func=lambda patient_id: f"{DEMO_PATIENTS[patient_id]['name']} · {patient_id} · {DEMO_PATIENTS[patient_id]['condition']}",
+    )
+    patient = DEMO_PATIENTS[selected_id]
+    list_col, main_col, note_col = st.columns([1.15, 3.2, 1.45], gap="small")
+    with list_col:
+        cards = "".join(
+            f'''<div class="patient-card {"selected" if patient_id == selected_id else ""}">
+            <div><b>{item["name"]}</b><span>{item["sex_age"]}</span></div>
+            <small>{patient_id}</small><em>{item["condition"]}</em>
+            <small>최근 검사 {item["last_exam"]}</small></div>'''
+            for patient_id, item in DEMO_PATIENTS.items()
+        )
+        panel("환자 목록", f'<div class="patient-list">{cards}</div>', "♙")
+    with main_col:
+        info = (
+            f'<div class="patient-profile"><div><small>환자 ID</small><b>{selected_id}</b></div>'
+            f'<div><small>성명</small><b>{patient["name"]}</b></div>'
+            f'<div><small>성별 / 나이</small><b>{patient["sex_age"]}</b></div>'
+            f'<div><small>생년월일</small><b>{patient["birth"]}</b></div>'
+            f'<div><small>연락처</small><b>{patient["phone"]}</b></div>'
+            f'<div><small>관리 상태</small><b class="patient-condition">{patient["condition"]}</b></div></div>'
+        )
+        panel("환자 기본정보", info, "●")
+        st.write("")
+        rows = "".join(
+            f"<tr><td>{date}</td><td>{exam}</td><td>{status}</td><td>{summary}</td></tr>"
+            for date, exam, status, summary in patient["history"]
+        )
+        panel("검사 및 분석 이력", f'<div class="history-table"><table><thead><tr><th>일자</th><th>검사</th><th>상태</th><th>요약</th></tr></thead><tbody>{rows}</tbody></table></div>', "▤")
+    with note_col:
+        panel("최근 임상 메모", f'<div class="clinical-note"><b>{patient["last_exam"]}</b><p>{patient["note"]}</p><small>담당 의료진 · 시연 계정</small></div>', "▧")
+        st.write("")
+        panel("MRI 분석 관리", '<div class="management-actions"><div><b>최근 상태</b><span>검사 이력 확인</span></div><div><b>보고서</b><span>XAI 보고서 시연</span></div><div><b>연동 상태</b><span class="ok-text">● PACScan 준비 완료</span></div></div>', "◈")
+
+
 st.set_page_config(page_title="NeuroLens | T2 MRI 분석", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 st.markdown('''<style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Inter:wght@400;600;700&display=swap');
@@ -91,13 +159,30 @@ st.markdown('''<style>
 .prob{margin:10px 0}.prob>div{display:flex;justify-content:space-between;font-size:10px;margin-bottom:5px}.prob i,.rbar i{display:block;height:6px;background:#1c2c40;border-radius:20px;overflow:hidden}.prob em,.rbar em{display:block;height:100%;border-radius:20px}.reason{padding:10px;border:1px solid #263d57;border-radius:5px;color:#b8c7d8;font-size:10px;line-height:1.65}.finding{padding:13px;background:#061426;font-size:14px;line-height:1.6}.warning{padding:12px;background:#2a1017;border-top:1px solid #66232e;color:#ffd3d7;font-size:11px}.warning b{color:#ffe000}
 .report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:94px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:175px;max-height:68px;object-fit:contain;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
 [data-testid="stFileUploader"]{background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important}[data-testid="stFileUploader"] section{padding:9px!important;background:#071729!important}[data-testid="stFileUploader"] *{color:#dcecff!important}[data-testid="stFileUploader"] button{background:#12345b!important;border:1px solid #357abb!important;color:#fff!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploaderDropzoneInstructions"] small{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important}.stButton button,.stDownloadButton button{width:100%;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
+.topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
 @media(max-width:1100px){div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="column"]{width:100%!important;flex:1 1 100%!important;min-width:100%!important}.topbar{flex-wrap:wrap}.topnav{order:3;width:100%;height:38px}.side-gap{display:none}.panel.pad{white-space:nowrap;overflow:auto}.side-item{display:inline-flex}.tri-view{grid-template-columns:1fr;grid-template-rows:auto}.tri-view figure:first-child{grid-row:auto;border-right:0}.tri-view figure{min-height:320px;border-bottom:1px solid #21374f}.tri-view figure:nth-child(n+2) img{max-height:320px}.report-top,.compare{grid-template-columns:1fr}}
-@media(max-width:650px){.topbar{min-height:64px;padding:8px 12px;gap:14px}.meta{display:none}.brand{font-size:17px;gap:9px}.brand img{width:110px;max-height:45px}.topnav{gap:13px;font-size:11px}.stepper{grid-template-columns:1fr 1fr}.file-grid,.qc-grid{grid-template-columns:1fr 1fr}.report>header{min-height:72px;padding:12px;font-size:17px;gap:12px}.report header img{width:115px;max-height:48px}.report main{padding:9px}.compare img{height:230px}.rbar{grid-template-columns:78px 1fr 40px}.report footer{gap:10px}}
+@media(max-width:650px){.topbar{min-height:64px;padding:8px 12px;gap:14px}.meta{display:none}.brand{font-size:17px;gap:9px}.brand img{width:110px;max-height:45px}.topnav{gap:13px;font-size:11px}.stepper{grid-template-columns:1fr 1fr}.file-grid,.qc-grid,.patient-profile{grid-template-columns:1fr 1fr}.report>header{min-height:72px;padding:12px;font-size:17px;gap:12px}.report header img{width:115px;max-height:48px}.report main{padding:9px}.compare img{height:230px}.rbar{grid-template-columns:78px 1fr 40px}.report footer{gap:10px}}
 </style>''', unsafe_allow_html=True)
 
 
 logo = data_url(ASSETS / "logo.png")
-st.markdown(f'<header class="topbar"><div class="brand"><img src="{logo}"><span><b>MRI</b> 분석 대시보드</span></div><nav class="topnav"><span class="active">뉴로렌즈(AI) 분석 결과</span><span>환자관리</span></nav><div class="meta">환자 ID. PT-2026-0477<br>검사일. 2024.10.28</div></header>', unsafe_allow_html=True)
+page = st.query_params.get("page", "analysis")
+if page not in {"analysis", "patients"}:
+    page = "analysis"
+analysis_active = "active" if page == "analysis" else ""
+patients_active = "active" if page == "patients" else ""
+meta = "환자 ID. PT-2026-0477<br>검사일. 2024.10.28" if page == "analysis" else "시연용 환자관리<br>개인정보 미사용"
+st.markdown(
+    f'<header class="topbar"><div class="brand"><img src="{logo}"><span><b>MRI</b> 분석 대시보드</span></div>'
+    f'<nav class="topnav"><a class="{analysis_active}" href="?page=analysis">뉴로렌즈(AI) 분석 결과</a>'
+    f'<a class="{patients_active}" href="?page=patients">환자관리</a></nav><div class="meta">{meta}</div></header>',
+    unsafe_allow_html=True,
+)
+
+if page == "patients":
+    render_patient_management()
+    st.caption("환자관리 화면의 모든 환자정보와 진료기록은 UI 시연을 위해 생성된 가상 데이터입니다.")
+    st.stop()
 
 for key, default in {"pipeline_done": False, "view": "원본 MRI", "source_name": None}.items():
     st.session_state.setdefault(key, default)
