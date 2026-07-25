@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -109,7 +110,15 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
     return viewer_html(views, title, badge, zoom_percent)
 
 
-def xai_report(result: Result, original_src: str, prep: dict, patient_id: str, patient: dict) -> str:
+def xai_report(
+    result: Result,
+    original_src: str,
+    prep: dict,
+    patient_id: str,
+    patient: dict,
+    exam_date: str,
+    generated_at: str,
+) -> str:
     logo = data_url(ASSETS / "logo.png")
     heatmap = data_url(ASSETS / "sample_t2_mri.png")
     full_pipeline = prep.get("pipeline_mode") == "local_full"
@@ -122,7 +131,7 @@ def xai_report(result: Result, original_src: str, prep: dict, patient_id: str, p
     run_id = prep.get("run_id", "세션 전용")
     return f'''<section class="report">
       <header><div>NeuroLens <b>XAI</b> <span>분석 보고서</span></div><img src="{logo}"></header>
-      <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>{patient_id}</dd><dt>검사일</dt><dd>{patient["last_exam"]}</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
+      <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>{patient_id}</dd><dt>검사일</dt><dd>{exam_date}</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
       <article><h3>▣ AI 모델 <small>(분석 구성 및 현재 상태)</small></h3>
       <div class="model-info">
         <div><b>전처리</b><span>{pipeline_name}<small>{pipeline_steps}<br>실행 ID {run_id}</small></span></div>
@@ -133,7 +142,7 @@ def xai_report(result: Result, original_src: str, prep: dict, patient_id: str, p
       <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>AI 분석 결과 (시연용 히트맵)</figcaption><img src="{heatmap}"></figure></div></article>
       <article><h3>▤ AI 진단 확률 요약</h3>{report_bar('정상', result.normal, '#1556c0')}{report_bar('전구기', result.prodromal, '#ff8c00')}{report_bar('파킨슨병 의심', result.pd, '#e91d2b')}</article>
       <article class="narrative"><strong>AI</strong><div><h3>핵심 판독 요약 <small>(RAG/LLM 기반 시연용)</small></h3><ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되었습니다.</li><li>임상 증상 및 추가 검사와 종합하여 전문의가 최종 판단해야 합니다.</li></ul></div></article>
-      <footer>▣ 생성일시　2024-10-28 14:32 <span>담당 전문의 서명　________________</span></footer></main></section>'''
+      <footer>▣ 생성일시　{generated_at} <span>담당 전문의 서명　________________</span></footer></main></section>'''
 
 
 def report_bar(label: str, value: int, color: str) -> str:
@@ -169,6 +178,12 @@ DEMO_PATIENTS = {
                     ("2026.03.20", "건강검진", "특이소견 없음", "정기검진")],
         "note": "시연용 정상 대조 환자입니다. 현재 등록된 임상 특이사항은 없습니다.",
     },
+}
+
+DEMO_REPORT_TIMES = {
+    ("PT-DEMO-001", "2026.07.23"): "2026.07.23 14:32",
+    ("PT-DEMO-002", "2026.07.18"): "2026.07.18 11:08",
+    ("PT-DEMO-003", "2026.07.10"): "2026.07.10 09:41",
 }
 
 
@@ -210,6 +225,28 @@ def demo_history_prep() -> dict:
         "pipeline_version": "saved_demo_v1",
         "run_id": "DEMO-HISTORY",
     }
+
+
+def resolve_report_dates(patient_id: str, exam_key: str, patient: dict) -> tuple[str, str]:
+    historical_exam_date = next(
+        (
+            date
+            for date, exam, _status, _summary in patient["history"]
+            if exam == "T2 MRI" and date.replace(".", "") == exam_key
+        ),
+        None,
+    )
+    if historical_exam_date:
+        return historical_exam_date, DEMO_REPORT_TIMES.get(
+            (patient_id, historical_exam_date),
+            f"{historical_exam_date} 00:00",
+        )
+    exam_date = patient["last_exam"]
+    generated_at = st.session_state.get(
+        "analysis_generated_at",
+        datetime.now().strftime("%Y.%m.%d %H:%M"),
+    )
+    return exam_date, generated_at
 
 
 def render_patient_management() -> None:
@@ -457,6 +494,7 @@ with center:
             st.session_state.prep = prep
             st.session_state.folder_scan = folder_scan
             st.session_state.pipeline_done = True
+            st.session_state.analysis_generated_at = datetime.now().strftime("%Y.%m.%d %H:%M")
             st.session_state.view = "전처리 결과"
             st.rerun()
     else:
@@ -487,7 +525,20 @@ with center:
             st.markdown(f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
         else:
             original_src = prep["original_views"][0]
-            html = xai_report(result, original_src, prep, selected_patient_id, selected_patient)
+            report_exam_date, report_generated_at = resolve_report_dates(
+                selected_patient_id,
+                requested_exam,
+                selected_patient,
+            )
+            html = xai_report(
+                result,
+                original_src,
+                prep,
+                selected_patient_id,
+                selected_patient,
+                report_exam_date,
+                report_generated_at,
+            )
             st.markdown(html, unsafe_allow_html=True)
             st.download_button("↓ XAI 보고서 HTML 다운로드", html.encode("utf-8"), "NeuroLens_XAI_Report.html", "text/html")
 
