@@ -19,3 +19,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.5.2,2026-07-26,feature,"환자관리에서 선택 환자 ID를 유지한 채 MRI 분석 화면으로 바로 이동하는 버튼 추가",ref21order_v1,false,complete
 1.5.3,2026-07-26,UX,"환자관리 왼쪽 환자 카드 전체를 클릭 가능한 선택 링크로 변경하고 선택·호버 상태 강조",ref21order_v1,false,complete
 1.5.4,2026-07-26,feature,"환자관리 목록 이름·ID·관리상태 통합 검색과 관리상태 필터 및 검색 결과 수 표시",ref21order_v1,false,complete
+1.5.5,2026-07-26,feature,"환자 검사 이력의 T2 MRI 행에서 저장된 AI 분석 결과와 XAI 보고서를 환자 정보 유지 상태로 바로 열기",ref21order_v1,false,complete

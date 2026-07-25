@@ -195,6 +195,23 @@ def filter_demo_patients(search_query: str, status_filter: str) -> list[str]:
     ]
 
 
+def demo_history_prep() -> dict:
+    axial = data_url(ASSETS / "sample_t2_mri.png")
+    coronal = data_url(ASSETS / "coronal_result.png")
+    sagittal = data_url(ASSETS / "sagittal_result.png")
+    return {
+        "original_views": [axial, coronal, sagittal],
+        "processed_views": [axial, coronal, sagittal],
+        "original_shape": (256, 256, 160),
+        "final_shape": (56, 56, 56),
+        "orientation": "RAS",
+        "spacing": "시연 기록",
+        "pipeline_mode": "history_demo",
+        "pipeline_version": "saved_demo_v1",
+        "run_id": "DEMO-HISTORY",
+    }
+
+
 def render_patient_management() -> None:
     st.markdown(
         '<div class="demo-notice">시연용 가상 환자 데이터입니다. 실제 개인정보나 임상 기록을 사용하지 않습니다.</div>',
@@ -262,11 +279,17 @@ def render_patient_management() -> None:
         )
         panel("환자 기본정보", info, "●")
         st.write("")
-        rows = "".join(
-            f"<tr><td>{date}</td><td>{exam}</td><td>{status}</td><td>{summary}</td></tr>"
-            for date, exam, status, summary in patient["history"]
-        )
-        panel("검사 및 분석 이력", f'<div class="history-table"><table><thead><tr><th>일자</th><th>검사</th><th>상태</th><th>요약</th></tr></thead><tbody>{rows}</tbody></table></div>', "▤")
+        rows = ""
+        for date, exam, status, summary in patient["history"]:
+            actions = "—"
+            if exam == "T2 MRI":
+                exam_key = date.replace(".", "")
+                actions = (
+                    f'<a class="history-link" href="?page=analysis&amp;patient={selected_id}&amp;result=ai&amp;exam={exam_key}">분석 결과</a>'
+                    f'<a class="history-link report-link" href="?page=analysis&amp;patient={selected_id}&amp;result=xai&amp;exam={exam_key}">XAI 보고서</a>'
+                )
+            rows += f"<tr><td>{date}</td><td>{exam}</td><td>{status}</td><td>{summary}</td><td>{actions}</td></tr>"
+        panel("검사 및 분석 이력", f'<div class="history-table"><table><thead><tr><th>일자</th><th>검사</th><th>상태</th><th>요약</th><th>바로가기</th></tr></thead><tbody>{rows}</tbody></table></div>', "▤")
     with note_col:
         panel("최근 임상 메모", f'<div class="clinical-note"><b>{patient["last_exam"]}</b><p>{patient["note"]}</p><small>담당 의료진 · 시연 계정</small></div>', "▧")
         st.write("")
@@ -295,7 +318,7 @@ st.markdown('''<style>
 .prob{margin:10px 0}.prob>div{display:flex;justify-content:space-between;font-size:10px;margin-bottom:5px}.prob i,.rbar i{display:block;height:6px;background:#1c2c40;border-radius:20px;overflow:hidden}.prob em,.rbar em{display:block;height:100%;border-radius:20px}.reason{padding:10px;border:1px solid #263d57;border-radius:5px;color:#b8c7d8;font-size:10px;line-height:1.65}.finding{padding:13px;background:#061426;font-size:14px;line-height:1.6}.warning{padding:12px;background:#2a1017;border-top:1px solid #66232e;color:#ffd3d7;font-size:11px}.warning b{color:#ffe000}
 .report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:94px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:175px;max-height:68px;object-fit:contain;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
 [data-testid="stFileUploader"]{background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important}[data-testid="stFileUploader"] section{padding:9px!important;background:#071729!important}[data-testid="stFileUploader"] *{color:#dcecff!important}[data-testid="stFileUploader"] button{background:#12345b!important;border:1px solid #357abb!important;color:#fff!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploaderDropzoneInstructions"] small{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important}.stButton button,.stDownloadButton button{width:100%;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
-.topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{display:block;padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526;color:#edf5ff;text-decoration:none;transition:border-color .15s ease,background .15s ease,transform .15s ease}.patient-card:hover{border-color:#278fff;background:#0b223d;transform:translateY(-1px)}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
+.topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{display:block;padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526;color:#edf5ff;text-decoration:none;transition:border-color .15s ease,background .15s ease,transform .15s ease}.patient-card:hover{border-color:#278fff;background:#0b223d;transform:translateY(-1px)}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.history-link{display:inline-block;margin:2px 5px 2px 0;padding:5px 7px;border:1px solid #2389e8;border-radius:5px;background:#0b3158;color:#8dccff!important;text-decoration:none;white-space:nowrap;font-size:10px;font-weight:700}.history-link:hover{background:#124b82;color:#fff!important}.history-link.report-link{border-color:#7563df;background:#28225a;color:#c5bcff!important}.history-link.report-link:hover{background:#3c3480;color:#fff!important}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
 .viewer-guide{margin:2px 0 8px;padding:8px 11px;border-left:3px solid #278fff;background:#07182a;color:#a9bdd2;font-size:11px}[data-testid="stSlider"]{padding:6px 10px 2px;border:1px solid #193550;border-radius:7px;background:#07172a}[data-testid="stSlider"] [data-testid="stWidgetLabel"] p{font-size:11px!important;color:#dcecff!important}
 .patient-action-label{height:28px;display:flex;align-items:flex-end;color:#9db0c5;font-size:11px;margin-bottom:5px}
 .filter-result{text-align:right;margin:-3px 2px 8px;color:#8298ad;font-size:10px}.filter-result b{color:#63b7ff}.empty-patient-list{padding:24px 10px;text-align:center;border:1px dashed #29425c;border-radius:7px;color:#8ea2b7;font-size:12px;line-height:1.7}.empty-patient-list small{color:#657b91}
@@ -337,6 +360,16 @@ if page == "patients":
 for key, default in {"pipeline_done": False, "view": "원본 MRI", "source_name": None}.items():
     st.session_state.setdefault(key, default)
 
+requested_result = st.query_params.get("result", "")
+requested_exam = st.query_params.get("exam", "")
+history_result_key = f"{selected_patient_id}:{requested_exam}:{requested_result}"
+history_result_active = requested_result in {"ai", "xai"} and bool(requested_exam)
+if history_result_active and st.session_state.get("history_result_key") != history_result_key:
+    st.session_state.prep = demo_history_prep()
+    st.session_state.pipeline_done = True
+    st.session_state.view = "AI 분석 (시연용)" if requested_result == "ai" else "XAI 보고서"
+    st.session_state.history_result_key = history_result_key
+
 nav, center, info = st.columns([.82, 5.15, 1.5], gap="small")
 with nav:
     st.markdown('<div class="panel pad"><div class="side-item">▣　진단뷰어</div><div class="side-item active">▤　분석도구</div><div class="side-item">▧　임상노트</div><div class="side-item">⚙　설정</div><div class="side-gap"></div></div>', unsafe_allow_html=True)
@@ -365,18 +398,18 @@ if file_items and st.session_state.source_name != folder_signature:
     ):
         st.session_state.pop(slice_key, None)
 
-step_state = 0 if not file_items else (4 if st.session_state.pipeline_done else 1)
+step_state = 4 if history_result_active else (0 if not file_items else (4 if st.session_state.pipeline_done else 1))
 with center:
     labels = ("1　DICOM 폴더", "2　변환·전처리", "3　AI 분석", "4　XAI 보고서")
     steps = "".join(f'<div class="step {"done" if i < step_state else "active" if i == step_state else ""}">{label}</div>' for i, label in enumerate(labels))
     if not st.session_state.pipeline_done:
         st.markdown(f'<div class="stepper">{steps}</div>', unsafe_allow_html=True)
 
-    if not file_items:
+    if not file_items and not history_result_active:
         st.markdown('<section class="panel"><div class="empty"><div class="brain">🧠</div><b>T2 MRI 분석 대기 중</b><small>왼쪽에서 환자 한 명의 DICOM 폴더를 선택하세요.<br>여러 시리즈가 있어도 T2 시리즈를 자동으로 찾습니다.</small></div></section>', unsafe_allow_html=True)
-    elif not folder_scan.valid:
+    elif not history_result_active and not folder_scan.valid:
         st.markdown(f'<div class="validation error">✕　{folder_scan.message}</div>', unsafe_allow_html=True)
-    elif not st.session_state.pipeline_done:
+    elif not history_result_active and not st.session_state.pipeline_done:
         expected_dicom_id = selected_patient["dicom_patient_id"]
         patient_id_matches = folder_scan.patient_id == expected_dicom_id
         masked_dicom_id = mask_patient_id(folder_scan.patient_id)
@@ -509,7 +542,9 @@ with info:
             panel("XAI 보고서 상태", report_status, "▤")
     else:
         panel("검사 대기", '<div class="reason">DICOM 폴더를 선택하고 분석을 시작하면 현재 화면에 맞는 정보가 표시됩니다.</div>', "◉")
-    if not file_items:
+    if history_result_active:
+        status_class, status_text = "demo", f"● 저장된 {selected_patient['last_exam']} MRI 시연 결과 열람 중"
+    elif not file_items:
         status_class, status_text = "idle", "○ 환자 T2 MRI DICOM 폴더 선택 대기"
     elif not folder_scan.valid:
         status_class, status_text = "error", "● DICOM 확인 필요 · 유효한 T2 시리즈를 찾지 못함"
