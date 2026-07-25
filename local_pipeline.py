@@ -20,7 +20,7 @@ from typing import Callable
 from preprocessing_adapter import preprocess_nifti
 
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 PIPELINE_VERSION = "ref21order_v1"
 SCRIPT_RELATIVE_PATH = Path("01_Preprocessing") / "스크립트" / "preparing_ref21order_v1.py"
 DEFAULT_SCRIPT = Path(r"E:\해커톤\BRAINTENSOR") / SCRIPT_RELATIVE_PATH
@@ -272,7 +272,11 @@ def run_local_pipeline(
         prep.update({
             "original_views": original_display["original_views"],
             "original_shape": original_display["original_shape"],
+            "original_bytes": raw_bytes,
+            "original_name": raw_path.name,
             "processed_views": final_display["original_views"],
+            "processed_bytes": final_bytes,
+            "processed_name": final_path.name,
             "output_bytes": final_bytes,
             "output_name": final_path.name,
             "pipeline_mode": "local_full",

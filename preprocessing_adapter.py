@@ -158,6 +158,11 @@ def _normalize_minmax(data: np.ndarray) -> np.ndarray:
 
 def _slice_png(data: np.ndarray, axis: int) -> str:
     index = data.shape[axis] // 2
+    return _slice_png_at(data, axis, index)
+
+
+def _slice_png_at(data: np.ndarray, axis: int, index: int) -> str:
+    index = max(0, min(int(index), data.shape[axis] - 1))
     plane = np.take(data, index, axis=axis)
     plane = np.rot90(plane)
     finite = plane[np.isfinite(plane)]
@@ -169,6 +174,17 @@ def _slice_png(data: np.ndarray, axis: int) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+
+
+def render_nifti_views(payload: bytes, filename: str, indices: tuple[int, int, int]) -> list[str]:
+    """Render axial, coronal and sagittal slices at user-selected indexes."""
+    img = nib.as_closest_canonical(_nifti_from_bytes(payload, filename))
+    data = img.get_fdata(dtype=np.float32)
+    data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+    return [
+        _slice_png_at(data, axis, index)
+        for axis, index in zip((2, 1, 0), indices)
+    ]
 
 
 def preprocess_nifti(payload: bytes, filename: str) -> dict:
@@ -190,6 +206,10 @@ def preprocess_nifti(payload: bytes, filename: str) -> dict:
         "orientation": "".join(nib.aff2axcodes(canonical.affine)),
         "original_views": [_slice_png(original, axis) for axis in (2, 1, 0)],
         "processed_views": [_slice_png(resized, axis) for axis in (2, 1, 0)],
+        "original_bytes": payload,
+        "original_name": filename,
+        "processed_bytes": output_bytes,
+        "processed_name": filename.removesuffix(".gz").removesuffix(".nii") + "_preprocessed_56.nii.gz",
         "output_bytes": output_bytes,
         "output_name": filename.removesuffix(".gz").removesuffix(".nii") + "_preprocessed_56.nii.gz",
     }

@@ -8,7 +8,7 @@ from typing import BinaryIO
 
 import streamlit as st
 
-from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, validate_nifti
+from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, render_nifti_views, validate_nifti
 from local_pipeline import APP_VERSION, local_pipeline_status, run_local_pipeline
 
 
@@ -42,6 +42,37 @@ def viewer_html(views: list[str], title: str, badge: str = "") -> str:
     labels = ("축상면", "관상면", "시상면")
     cards = "".join(f'<figure><figcaption>{label}</figcaption><img src="{src}"></figure>' for label, src in zip(labels, views))
     return f'<section class="panel"><div class="head"><span>◈</span>{title}<b class="badge">{badge}</b></div><div class="tri-view">{cards}</div></section>'
+
+
+def interactive_mri_viewer(prep: dict, source: str) -> str:
+    is_original = source == "original"
+    shape = tuple(int(value) for value in (prep["original_shape"] if is_original else prep["final_shape"]))
+    prefix = "original" if is_original else "processed"
+    labels = ("축상면", "관상면", "시상면")
+    sizes = (shape[2], shape[1], shape[0])
+    control_columns = st.columns(3, gap="small")
+    indices = []
+    for column, label, size in zip(control_columns, labels, sizes):
+        with column:
+            indices.append(
+                st.slider(
+                    f"{label} 슬라이스",
+                    min_value=0,
+                    max_value=max(size - 1, 0),
+                    value=max(size // 2, 0),
+                    key=f"{prefix}_{label}_slice",
+                )
+            )
+    payload_key = "original_bytes" if is_original else "processed_bytes"
+    name_key = "original_name" if is_original else "processed_name"
+    fallback_key = "original_views" if is_original else "processed_views"
+    if prep.get(payload_key):
+        views = render_nifti_views(prep[payload_key], prep[name_key], tuple(indices))
+    else:
+        views = prep[fallback_key]
+    title = "원본 T2 MRI" if is_original else "전처리 결과"
+    badge = " · ".join(f"{label} {index + 1}/{size}" for label, index, size in zip(labels, indices, sizes))
+    return viewer_html(views, title, badge)
 
 
 def xai_report(result: Result, original_src: str, prep: dict) -> str:
@@ -160,6 +191,7 @@ st.markdown('''<style>
 .report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:94px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:175px;max-height:68px;object-fit:contain;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
 [data-testid="stFileUploader"]{background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important}[data-testid="stFileUploader"] section{padding:9px!important;background:#071729!important}[data-testid="stFileUploader"] *{color:#dcecff!important}[data-testid="stFileUploader"] button{background:#12345b!important;border:1px solid #357abb!important;color:#fff!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploaderDropzoneInstructions"] small{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important}.stButton button,.stDownloadButton button{width:100%;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
 .topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
+.viewer-guide{margin:2px 0 8px;padding:8px 11px;border-left:3px solid #278fff;background:#07182a;color:#a9bdd2;font-size:11px}[data-testid="stSlider"]{padding:6px 10px 2px;border:1px solid #193550;border-radius:7px;background:#07172a}[data-testid="stSlider"] [data-testid="stWidgetLabel"] p{font-size:11px!important;color:#dcecff!important}
 @media(max-width:1100px){div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="column"]{width:100%!important;flex:1 1 100%!important;min-width:100%!important}.topbar{flex-wrap:wrap}.topnav{order:3;width:100%;height:38px}.side-gap{display:none}.panel.pad{white-space:nowrap;overflow:auto}.side-item{display:inline-flex}.tri-view{grid-template-columns:1fr;grid-template-rows:auto}.tri-view figure:first-child{grid-row:auto;border-right:0}.tri-view figure{min-height:320px;border-bottom:1px solid #21374f}.tri-view figure:nth-child(n+2) img{max-height:320px}.report-top,.compare{grid-template-columns:1fr}}
 @media(max-width:650px){.topbar{min-height:64px;padding:8px 12px;gap:14px}.meta{display:none}.brand{font-size:17px;gap:9px}.brand img{width:110px;max-height:45px}.topnav{gap:13px;font-size:11px}.stepper{grid-template-columns:1fr 1fr}.file-grid,.qc-grid,.patient-profile{grid-template-columns:1fr 1fr}.report>header{min-height:72px;padding:12px;font-size:17px;gap:12px}.report header img{width:115px;max-height:48px}.report main{padding:9px}.compare img{height:230px}.rbar{grid-template-columns:78px 1fr 40px}.report footer{gap:10px}}
 </style>''', unsafe_allow_html=True)
@@ -207,6 +239,11 @@ if file_items and st.session_state.source_name != folder_signature:
     st.session_state.source_name = folder_signature
     st.session_state.pop("prep", None)
     st.session_state.pop("folder_scan", None)
+    for slice_key in (
+        "original_축상면_slice", "original_관상면_slice", "original_시상면_slice",
+        "processed_축상면_slice", "processed_관상면_slice", "processed_시상면_slice",
+    ):
+        st.session_state.pop(slice_key, None)
 
 step_state = 0 if not file_items else (4 if st.session_state.pipeline_done else 1)
 with center:
@@ -266,9 +303,11 @@ with center:
         st.session_state.view = view
         result = Result()
         if view == "원본 MRI":
-            st.markdown(viewer_html(prep["original_views"], "원본 T2 MRI", "업로드 원본"), unsafe_allow_html=True)
+            st.markdown('<div class="viewer-guide">슬라이더를 움직여 각 방향의 MRI 단면을 확인하세요.</div>', unsafe_allow_html=True)
+            st.markdown(interactive_mri_viewer(prep, "original"), unsafe_allow_html=True)
         elif view == "전처리 결과":
-            st.markdown(viewer_html(prep["processed_views"], "전처리 결과", "BRAINTENSOR 전처리"), unsafe_allow_html=True)
+            st.markdown('<div class="viewer-guide">슬라이더를 움직여 전처리된 3D MRI 단면을 확인하세요.</div>', unsafe_allow_html=True)
+            st.markdown(interactive_mri_viewer(prep, "processed"), unsafe_allow_html=True)
             st.markdown(f'<div class="qc-grid"><div class="qc ok"><small>NIfTI 검증</small><b>✓ 통과</b></div><div class="qc ok"><small>Orientation</small><b>✓ {prep["orientation"]}</b></div><div class="qc ok"><small>Intensity</small><b>✓ Min-Max</b></div><div class="qc ok"><small>출력 Shape</small><b>✓ {prep["final_shape"]}</b></div></div>', unsafe_allow_html=True)
             st.download_button("↓ 전처리 NIfTI 다운로드", prep["output_bytes"], prep["output_name"], "application/gzip")
             if prep.get("pipeline_mode") == "local_full":
