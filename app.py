@@ -38,14 +38,23 @@ def panel(title: str, content: str, icon: str = "▣") -> None:
     st.markdown(f'<section class="panel"><div class="head"><span>{icon}</span>{title}</div><div class="pad">{content}</div></section>', unsafe_allow_html=True)
 
 
-def viewer_html(views: list[str], title: str, badge: str = "") -> str:
+def viewer_html(views: list[str], title: str, badge: str = "", zoom_percent: int = 100) -> str:
     labels = ("축상면", "관상면", "시상면")
-    cards = "".join(f'<figure><figcaption>{label}</figcaption><img src="{src}"></figure>' for label, src in zip(labels, views))
+    cards = "".join(
+        f'<figure><figcaption>{label}</figcaption><img src="{src}" style="transform:scale({zoom_percent / 100:.2f})"></figure>'
+        for label, src in zip(labels, views)
+    )
     return f'<section class="panel"><div class="head"><span>◈</span>{title}<b class="badge">{badge}</b></div><div class="tri-view">{cards}</div></section>'
 
 
 def relative_slice_index(size: int, position_percent: int) -> int:
     return round((max(size, 1) - 1) * max(0, min(position_percent, 100)) / 100)
+
+
+def reset_mri_view() -> None:
+    for label in ("축상면", "관상면", "시상면"):
+        st.session_state[f"linked_{label}_position"] = 50
+    st.session_state["linked_mri_zoom"] = 100
 
 
 def interactive_mri_viewer(prep: dict, source: str) -> str:
@@ -66,6 +75,23 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
                     key=f"linked_{label}_position",
                 )
             )
+    zoom_column, reset_column = st.columns([4, 1], gap="small")
+    with zoom_column:
+        zoom_percent = st.slider(
+            "영상 확대·축소 (%)",
+            min_value=50,
+            max_value=250,
+            value=100,
+            step=10,
+            key="linked_mri_zoom",
+        )
+    with reset_column:
+        st.button(
+            "↺ 보기 초기화",
+            key="reset_mri_view",
+            use_container_width=True,
+            on_click=reset_mri_view,
+        )
     indices = [relative_slice_index(size, position) for size, position in zip(sizes, positions)]
     payload_key = "original_bytes" if is_original else "processed_bytes"
     name_key = "original_name" if is_original else "processed_name"
@@ -75,11 +101,12 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
     else:
         views = prep[fallback_key]
     title = "원본 T2 MRI" if is_original else "전처리 결과"
-    badge = " · ".join(
+    position_badge = " · ".join(
         f"{label} {index + 1}/{size} ({position}%)"
         for label, index, size, position in zip(labels, indices, sizes, positions)
     )
-    return viewer_html(views, title, badge)
+    badge = f"{position_badge} · 확대 {zoom_percent}%"
+    return viewer_html(views, title, badge, zoom_percent)
 
 
 def xai_report(result: Result, original_src: str, prep: dict) -> str:
@@ -193,7 +220,7 @@ st.markdown('''<style>
 .panel{background:linear-gradient(145deg,#0c1c30,#071424);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.15)}.head{min-height:44px;padding:10px 14px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--line);font-size:15px;font-weight:700}.head>span{color:var(--blue)}.head .badge{margin-left:auto;padding:4px 7px;border:1px solid #1d6bb7;border-radius:30px;color:#58b0ff;font-size:9px}.pad{padding:13px}.side-item{height:45px;display:flex;align-items:center;padding:0 12px;margin:4px 0;border-radius:5px;font-size:13px;font-weight:650}.side-item.active{background:linear-gradient(90deg,#174bad,#2064d8)}.side-gap{height:70px}.hint{font-size:10px;color:var(--muted);line-height:1.6;margin:7px 2px}
 .stepper{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}.step{padding:10px;border:1px solid #1c3551;border-radius:7px;background:#071528;color:#71869e;font-size:11px;text-align:center}.step.done{border-color:#1775c9;color:#78bdff;background:#09213d}.step.active{border-color:#2b99ff;color:#fff;box-shadow:0 0 0 1px #2b99ff inset}.empty{min-height:520px;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:#71859c}.empty b{color:#c5d5e6;font-size:17px;margin:12px}.empty .brain{font-size:55px;filter:grayscale(1);opacity:.6}
 .validation{padding:14px;border-left:4px solid #2bdbac;background:#08201f;border-radius:5px;color:#c8eee5;font-size:11px;line-height:1.8}.validation.error{border-color:#ff4150;background:#281018;color:#ffd2d6}.file-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:11px}.file-grid div{padding:9px;background:#071426;border:1px solid #1a3049;border-radius:5px}.file-grid small{display:block;color:#768ba3;font-size:9px}.file-grid b{font-size:11px}
-.tri-view{display:grid;grid-template-columns:minmax(0,2.45fr) minmax(190px,1fr);grid-template-rows:1fr 1fr;min-height:500px;background:#01070e}.tri-view figure{margin:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}.tri-view figure:first-child{grid-row:1/3;border-right:1px solid #21374f}.tri-view figure:nth-child(2){border-bottom:1px solid #21374f}.tri-view figcaption{position:absolute;top:9px;left:10px;background:#061426cc;padding:4px 7px;border-radius:3px;font-size:10px;z-index:2}.tri-view img{width:100%;height:100%;max-height:540px;object-fit:contain}.tri-view figure:nth-child(n+2) img{max-height:250px}.qc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.qc{padding:11px;border:1px solid #1c3853;background:#071729;border-radius:6px}.qc small{display:block;color:#7f95ad;font-size:9px}.qc b{font-size:12px}.qc.ok b{color:#3bd6ae}.demo{padding:8px 12px;background:#3b2a08;border:1px solid #8a6718;border-radius:5px;color:#ffd76a;font-size:10px;margin-bottom:9px}
+.tri-view{display:grid;grid-template-columns:minmax(0,2.45fr) minmax(190px,1fr);grid-template-rows:1fr 1fr;min-height:500px;background:#01070e}.tri-view figure{margin:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}.tri-view figure:first-child{grid-row:1/3;border-right:1px solid #21374f}.tri-view figure:nth-child(2){border-bottom:1px solid #21374f}.tri-view figcaption{position:absolute;top:9px;left:10px;background:#061426cc;padding:4px 7px;border-radius:3px;font-size:10px;z-index:2}.tri-view img{width:100%;height:100%;max-height:540px;object-fit:contain;transform-origin:center center;transition:transform .18s ease}.tri-view figure:nth-child(n+2) img{max-height:250px}.qc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.qc{padding:11px;border:1px solid #1c3853;background:#071729;border-radius:6px}.qc small{display:block;color:#7f95ad;font-size:9px}.qc b{font-size:12px}.qc.ok b{color:#3bd6ae}.demo{padding:8px 12px;background:#3b2a08;border:1px solid #8a6718;border-radius:5px;color:#ffd76a;font-size:10px;margin-bottom:9px}
 .prob{margin:10px 0}.prob>div{display:flex;justify-content:space-between;font-size:10px;margin-bottom:5px}.prob i,.rbar i{display:block;height:6px;background:#1c2c40;border-radius:20px;overflow:hidden}.prob em,.rbar em{display:block;height:100%;border-radius:20px}.reason{padding:10px;border:1px solid #263d57;border-radius:5px;color:#b8c7d8;font-size:10px;line-height:1.65}.finding{padding:13px;background:#061426;font-size:14px;line-height:1.6}.warning{padding:12px;background:#2a1017;border-top:1px solid #66232e;color:#ffd3d7;font-size:11px}.warning b{color:#ffe000}
 .report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:94px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:175px;max-height:68px;object-fit:contain;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
 [data-testid="stFileUploader"]{background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important}[data-testid="stFileUploader"] section{padding:9px!important;background:#071729!important}[data-testid="stFileUploader"] *{color:#dcecff!important}[data-testid="stFileUploader"] button{background:#12345b!important;border:1px solid #357abb!important;color:#fff!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploaderDropzoneInstructions"] small{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important}.stButton button,.stDownloadButton button{width:100%;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
@@ -250,6 +277,7 @@ if file_items and st.session_state.source_name != folder_signature:
         "original_축상면_slice", "original_관상면_slice", "original_시상면_slice",
         "processed_축상면_slice", "processed_관상면_slice", "processed_시상면_slice",
         "linked_축상면_position", "linked_관상면_position", "linked_시상면_position",
+        "linked_mri_zoom",
     ):
         st.session_state.pop(slice_key, None)
 
