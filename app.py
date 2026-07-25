@@ -185,13 +185,24 @@ def render_patient_management() -> None:
         '<div class="demo-notice">시연용 가상 환자 데이터입니다. 실제 개인정보나 임상 기록을 사용하지 않습니다.</div>',
         unsafe_allow_html=True,
     )
-    selected_id = st.selectbox(
-        "환자 선택",
-        list(DEMO_PATIENTS),
-        format_func=lambda patient_id: f"{DEMO_PATIENTS[patient_id]['name']} · {patient_id} · {DEMO_PATIENTS[patient_id]['condition']}",
-        key="selected_patient_id",
-        on_change=sync_selected_patient_query,
-    )
+    select_column, action_column = st.columns([4, 1], gap="small")
+    with select_column:
+        selected_id = st.selectbox(
+            "환자 선택",
+            list(DEMO_PATIENTS),
+            format_func=lambda patient_id: f"{DEMO_PATIENTS[patient_id]['name']} · {patient_id} · {DEMO_PATIENTS[patient_id]['condition']}",
+            key="selected_patient_id",
+            on_change=sync_selected_patient_query,
+        )
+    with action_column:
+        st.markdown('<div class="patient-action-label">선택 환자 작업</div>', unsafe_allow_html=True)
+        st.button(
+            "MRI 분석 열기 →",
+            key="open_selected_patient_analysis",
+            type="primary",
+            use_container_width=True,
+            on_click=open_selected_patient_analysis,
+        )
     patient = DEMO_PATIENTS[selected_id]
     list_col, main_col, note_col = st.columns([1.15, 3.2, 1.45], gap="small")
     with list_col:
@@ -230,6 +241,11 @@ def sync_selected_patient_query() -> None:
     st.query_params["patient"] = st.session_state["selected_patient_id"]
 
 
+def open_selected_patient_analysis() -> None:
+    st.query_params["page"] = "analysis"
+    st.query_params["patient"] = st.session_state["selected_patient_id"]
+
+
 st.set_page_config(page_title="NeuroLens | T2 MRI 분석", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 st.markdown('''<style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Inter:wght@400;600;700&display=swap');
@@ -244,6 +260,7 @@ st.markdown('''<style>
 [data-testid="stFileUploader"]{background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important}[data-testid="stFileUploader"] section{padding:9px!important;background:#071729!important}[data-testid="stFileUploader"] *{color:#dcecff!important}[data-testid="stFileUploader"] button{background:#12345b!important;border:1px solid #357abb!important;color:#fff!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploaderDropzoneInstructions"] small{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important}.stButton button,.stDownloadButton button{width:100%;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
 .topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
 .viewer-guide{margin:2px 0 8px;padding:8px 11px;border-left:3px solid #278fff;background:#07182a;color:#a9bdd2;font-size:11px}[data-testid="stSlider"]{padding:6px 10px 2px;border:1px solid #193550;border-radius:7px;background:#07172a}[data-testid="stSlider"] [data-testid="stWidgetLabel"] p{font-size:11px!important;color:#dcecff!important}
+.patient-action-label{height:28px;display:flex;align-items:flex-end;color:#9db0c5;font-size:11px;margin-bottom:5px}
 @media(max-width:1100px){div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="column"]{width:100%!important;flex:1 1 100%!important;min-width:100%!important}.topbar{flex-wrap:wrap}.topnav{order:3;width:100%;height:38px}.side-gap{display:none}.panel.pad{white-space:nowrap;overflow:auto}.side-item{display:inline-flex}.tri-view{grid-template-columns:1fr;grid-template-rows:auto}.tri-view figure:first-child{grid-row:auto;border-right:0}.tri-view figure{min-height:320px;border-bottom:1px solid #21374f}.tri-view figure:nth-child(n+2) img{max-height:320px}.report-top,.compare{grid-template-columns:1fr}}
 @media(max-width:650px){.topbar{min-height:64px;padding:8px 12px;gap:14px}.meta{display:none}.brand{font-size:17px;gap:9px}.brand img{width:110px;max-height:45px}.topnav{gap:13px;font-size:11px}.stepper{grid-template-columns:1fr 1fr}.file-grid,.qc-grid,.patient-profile{grid-template-columns:1fr 1fr}.report>header{min-height:72px;padding:12px;font-size:17px;gap:12px}.report header img{width:115px;max-height:48px}.report main{padding:9px}.compare img{height:230px}.rbar{grid-template-columns:78px 1fr 40px}.report footer{gap:10px}}
 </style>''', unsafe_allow_html=True)
