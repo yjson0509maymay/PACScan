@@ -109,7 +109,7 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
     return viewer_html(views, title, badge, zoom_percent)
 
 
-def xai_report(result: Result, original_src: str, prep: dict) -> str:
+def xai_report(result: Result, original_src: str, prep: dict, patient_id: str, patient: dict) -> str:
     logo = data_url(ASSETS / "logo.png")
     heatmap = data_url(ASSETS / "sample_t2_mri.png")
     full_pipeline = prep.get("pipeline_mode") == "local_full"
@@ -122,7 +122,7 @@ def xai_report(result: Result, original_src: str, prep: dict) -> str:
     run_id = prep.get("run_id", "세션 전용")
     return f'''<section class="report">
       <header><div>NeuroLens <b>XAI</b> <span>분석 보고서</span></div><img src="{logo}"></header>
-      <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>PT-2026-0417</dd><dt>검사일</dt><dd>2024-10-28</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
+      <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>{patient_id}</dd><dt>검사일</dt><dd>{patient["last_exam"]}</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
       <article><h3>▣ AI 모델 <small>(분석 구성 및 현재 상태)</small></h3>
       <div class="model-info">
         <div><b>전처리</b><span>{pipeline_name}<small>{pipeline_steps}<br>실행 ID {run_id}</small></span></div>
@@ -178,6 +178,8 @@ def render_patient_management() -> None:
         "환자 선택",
         list(DEMO_PATIENTS),
         format_func=lambda patient_id: f"{DEMO_PATIENTS[patient_id]['name']} · {patient_id} · {DEMO_PATIENTS[patient_id]['condition']}",
+        key="selected_patient_id",
+        on_change=sync_selected_patient_query,
     )
     patient = DEMO_PATIENTS[selected_id]
     list_col, main_col, note_col = st.columns([1.15, 3.2, 1.45], gap="small")
@@ -212,6 +214,11 @@ def render_patient_management() -> None:
         panel("MRI 분석 관리", '<div class="management-actions"><div><b>최근 상태</b><span>검사 이력 확인</span></div><div><b>보고서</b><span>XAI 보고서 시연</span></div><div><b>연동 상태</b><span class="ok-text">● PACScan 준비 완료</span></div></div>', "◈")
 
 
+def sync_selected_patient_query() -> None:
+    st.query_params["page"] = "patients"
+    st.query_params["patient"] = st.session_state["selected_patient_id"]
+
+
 st.set_page_config(page_title="NeuroLens | T2 MRI 분석", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 st.markdown('''<style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Inter:wght@400;600;700&display=swap');
@@ -235,13 +242,24 @@ logo = data_url(ASSETS / "logo.png")
 page = st.query_params.get("page", "analysis")
 if page not in {"analysis", "patients"}:
     page = "analysis"
+requested_patient_id = st.query_params.get("patient", "")
+if requested_patient_id in DEMO_PATIENTS:
+    st.session_state["selected_patient_id"] = requested_patient_id
+else:
+    st.session_state.setdefault("selected_patient_id", "PT-DEMO-001")
+selected_patient_id = st.session_state["selected_patient_id"]
+selected_patient = DEMO_PATIENTS[selected_patient_id]
 analysis_active = "active" if page == "analysis" else ""
 patients_active = "active" if page == "patients" else ""
-meta = "환자 ID. PT-2026-0477<br>검사일. 2024.10.28" if page == "analysis" else "시연용 환자관리<br>개인정보 미사용"
+meta = (
+    f"환자 ID. {selected_patient_id}<br>검사일. {selected_patient['last_exam']}"
+    if page == "analysis"
+    else f"선택 환자. {selected_patient['name']}<br>시연용 데이터"
+)
 st.markdown(
     f'<header class="topbar"><div class="brand"><img src="{logo}"><span><b>MRI</b> 분석 대시보드</span></div>'
-    f'<nav class="topnav"><a class="{analysis_active}" href="?page=analysis">뉴로렌즈(AI) 분석 결과</a>'
-    f'<a class="{patients_active}" href="?page=patients">환자관리</a></nav><div class="meta">{meta}</div></header>',
+    f'<nav class="topnav"><a class="{analysis_active}" href="?page=analysis&patient={selected_patient_id}">뉴로렌즈(AI) 분석 결과</a>'
+    f'<a class="{patients_active}" href="?page=patients&patient={selected_patient_id}">환자관리</a></nav><div class="meta">{meta}</div></header>',
     unsafe_allow_html=True,
 )
 
@@ -357,12 +375,18 @@ with center:
             st.markdown(f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
         else:
             original_src = prep["original_views"][0]
-            html = xai_report(result, original_src, prep)
+            html = xai_report(result, original_src, prep, selected_patient_id, selected_patient)
             st.markdown(html, unsafe_allow_html=True)
             st.download_button("↓ XAI 보고서 HTML 다운로드", html.encode("utf-8"), "NeuroLens_XAI_Report.html", "text/html")
 
 with info:
-    panel("환자정보", '<dl class="pinfo"><b>ID</b>　PT-2026-0477<br><br><b>성명/나이</b>　김파킨 (M/64)<br><br><b>검사</b>　T2 MRI</dl>', "●")
+    panel(
+        "환자정보",
+        f'<dl class="pinfo"><b>ID</b>　{selected_patient_id}<br><br>'
+        f'<b>성명/나이</b>　{selected_patient["name"]} ({selected_patient["sex_age"]})<br><br>'
+        f'<b>관리 상태</b>　{selected_patient["condition"]}<br><br><b>검사</b>　T2 MRI</dl>',
+        "●",
+    )
     st.write("")
     if st.session_state.pipeline_done:
         active_view = st.session_state.view
