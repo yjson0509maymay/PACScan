@@ -30,3 +30,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.6.3,2026-07-26,fix,"Streamlit Cloud DICOM 변환 실패 시 pydicom 3D 적층 보조 변환을 시도하고 전체 앱 중단 대신 한글 오류 안내 표시",ref21order_v1,false,complete
 1.6.4,2026-07-26,UX,"전처리·원본 MRI 뷰어의 보기 초기화 버튼을 76×76px 정사각형으로 고정하고 슬라이더 옆 중앙 정렬",ref21order_v1,false,complete
 1.6.5,2026-07-26,UX,"영상 확대·축소 박스와 정사각형 초기화 버튼의 합산 너비를 위쪽 3개 위치 박스 총너비에 맞추도록 우측 정렬",ref21order_v1,false,complete
+1.6.6,2026-07-26,feature,"XAI 판독 결과를 한글 글꼴과 영상이 포함된 PDF로 생성하고 환자 ID·검사일 파일명으로 다운로드",ref21order_v1,false,complete

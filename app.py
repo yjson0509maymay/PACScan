@@ -11,6 +11,7 @@ import streamlit as st
 
 from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, render_nifti_views, validate_nifti
 from local_pipeline import APP_VERSION, local_pipeline_status, run_local_pipeline
+from pdf_report import generate_xai_pdf
 
 
 ROOT = Path(__file__).parent
@@ -550,7 +551,24 @@ with center:
                 report_generated_at,
             )
             st.markdown(html, unsafe_allow_html=True)
-            st.download_button("↓ XAI 보고서 HTML 다운로드", html.encode("utf-8"), "NeuroLens_XAI_Report.html", "text/html")
+            pdf_bytes = generate_xai_pdf(
+                result=result,
+                original_src=original_src,
+                prep=prep,
+                patient_id=selected_patient_id,
+                patient=selected_patient,
+                exam_date=report_exam_date,
+                generated_at=report_generated_at,
+                app_version=APP_VERSION,
+                assets_dir=ASSETS,
+            )
+            safe_exam_date = report_exam_date.replace(".", "")
+            st.download_button(
+                "↓ XAI 판독 결과 PDF 다운로드",
+                pdf_bytes,
+                f"ParkinsLens_XAI_{selected_patient_id}_{safe_exam_date}.pdf",
+                "application/pdf",
+            )
 
 with info:
     panel(
