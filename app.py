@@ -413,7 +413,7 @@ with nav:
     sample_path = ASSETS / "PACScan_sample_DICOM_folder.zip"
     if sample_path.exists():
         st.download_button("↓ 예시 DICOM 폴더 받기", sample_path.read_bytes(), "PACScan_sample_DICOM_folder.zip", "application/zip")
-    uploaded_files = st.file_uploader("환자 T2 MRI DICOM 폴더 선택", accept_multiple_files="directory", help="환자 한 명의 DICOM 파일이 들어 있는 폴더를 선택하세요.")
+    uploaded_files = st.file_uploader("환자 T2 MRI DICOM 폴더 선택", accept_multiple_files="directory")
     st.markdown('<div class="hint">예시는 ZIP 압축을 푼 뒤 폴더를 업로드하세요.</div>', unsafe_allow_html=True)
     local_status = runtime_status()
     mode_label = "실제 로컬 전처리" if local_status.ready else "클라우드 경량 전처리"
