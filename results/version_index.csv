@@ -21,3 +21,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.5.4,2026-07-26,feature,"환자관리 목록 이름·ID·관리상태 통합 검색과 관리상태 필터 및 검색 결과 수 표시",ref21order_v1,false,complete
 1.5.5,2026-07-26,feature,"환자 검사 이력의 T2 MRI 행에서 저장된 AI 분석 결과와 XAI 보고서를 환자 정보 유지 상태로 바로 열기",ref21order_v1,false,complete
 1.5.6,2026-07-26,data,"선택한 검사 이력 날짜를 XAI 보고서 검사일에 반영하고 저장된 생성 시각 또는 신규 분석 완료 시각을 생성일시에 표시",ref21order_v1,false,complete
+1.5.7,2026-07-26,UX,"왼쪽 DICOM 업로드 버튼을 한글로 표시하고 좁은 패널 안에서 잘리지 않도록 너비·줄바꿈·용량 안내 숨김 처리",ref21order_v1,false,complete
