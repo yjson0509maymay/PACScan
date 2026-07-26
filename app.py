@@ -414,7 +414,7 @@ with nav:
     if sample_path.exists():
         st.download_button("↓ 예시 DICOM 폴더 받기", sample_path.read_bytes(), "PACScan_sample_DICOM_folder.zip", "application/zip")
     uploaded_files = st.file_uploader("환자 T2 MRI DICOM 폴더 선택", accept_multiple_files="directory", help="환자 한 명의 DICOM 파일이 들어 있는 폴더를 선택하세요.")
-    st.markdown('<div class="hint">예시는 ZIP 압축을 푼 뒤 폴더를 선택하세요.<br>DICOM 시리즈를 자동 분류하고 T2를 선택합니다.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hint">예시는 ZIP 압축을 푼 뒤 폴더를 업로드하세요.</div>', unsafe_allow_html=True)
     local_status = runtime_status()
     mode_label = "실제 로컬 전처리" if local_status.ready else "클라우드 경량 전처리"
     st.markdown(f'<div class="reason"><b>실행 모드</b><br>{mode_label}<br><small>PACScan v{APP_VERSION}</small></div>', unsafe_allow_html=True)
@@ -443,7 +443,7 @@ with center:
         st.markdown(f'<div class="stepper">{steps}</div>', unsafe_allow_html=True)
 
     if not file_items and not history_result_active:
-        st.markdown('<section class="panel"><div class="empty"><div class="brain">🧠</div><b>T2 MRI 분석 대기 중</b><small>왼쪽에서 환자 한 명의 DICOM 폴더를 선택하세요.<br>여러 시리즈가 있어도 T2 시리즈를 자동으로 찾습니다.</small></div></section>', unsafe_allow_html=True)
+        st.markdown('<section class="panel"><div class="empty"><div class="brain">🧠</div><b>T2 MRI 분석 대기 중</b><small>환자 한 명의 DICOM 폴더를 선택하세요.</small></div></section>', unsafe_allow_html=True)
     elif not history_result_active and not folder_scan.valid:
         st.markdown(f'<div class="validation error">✕　{folder_scan.message}</div>', unsafe_allow_html=True)
     elif not history_result_active and not st.session_state.pipeline_done:
