@@ -25,3 +25,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.5.8,2026-07-26,copy,"중앙 분석 대기 안내와 왼쪽 ZIP 예시 안내 문구를 짧고 명확한 업로드 지시문으로 수정",ref21order_v1,false,complete
 1.5.9,2026-07-26,UX,"DICOM 폴더 업로드 제목 오른쪽의 물음표 도움말 아이콘과 팝업 박스를 제거",ref21order_v1,false,complete
 1.6.0,2026-07-26,responsive,"전체 화면 한글을 단어 단위로 줄바꿈하도록 공통 규칙 적용하고 업로드·상태·보고서 용어와 소형 화면 정렬을 보정",ref21order_v1,false,complete
+1.6.1,2026-07-26,responsive,"전체 화면의 비상 음절 분리를 금지하고 버튼·라벨·업로더에 단어 단위 줄바꿈을 강제 적용",ref21order_v1,false,complete
