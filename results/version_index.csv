@@ -27,3 +27,4 @@ version,date_kst,change_type,summary,pipeline,bias_correction,status
 1.6.0,2026-07-26,responsive,"전체 화면 한글을 단어 단위로 줄바꿈하도록 공통 규칙 적용하고 업로드·상태·보고서 용어와 소형 화면 정렬을 보정",ref21order_v1,false,complete
 1.6.1,2026-07-26,responsive,"전체 화면의 비상 음절 분리를 금지하고 버튼·라벨·업로더에 단어 단위 줄바꿈을 강제 적용",ref21order_v1,false,complete
 1.6.2,2026-07-26,branding,"공통 로고를 새 ParkinsLens 이미지로 교체하고 상단 헤더와 XAI 보고서에서 정사각형 로고를 크게 표시",ref21order_v1,false,complete
+1.6.3,2026-07-26,fix,"Streamlit Cloud DICOM 변환 실패 시 pydicom 3D 적층 보조 변환을 시도하고 전체 앱 중단 대신 한글 오류 안내 표시",ref21order_v1,false,complete

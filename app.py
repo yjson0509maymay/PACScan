@@ -479,7 +479,17 @@ with center:
                 st.stop()
             else:
                 time.sleep(.2); progress.progress(18, text="T2 시리즈 정렬")
-                nifti_payload, nifti_name = convert_dicom_folder(file_items, folder_scan.selected_uid)
+                try:
+                    nifti_payload, nifti_name = convert_dicom_folder(file_items, folder_scan.selected_uid)
+                except Exception as exc:
+                    progress.empty()
+                    st.error("DICOM을 3D NIfTI 영상으로 변환하지 못했습니다.")
+                    st.info(
+                        "같은 환자의 T2 MRI 원본 DICOM 슬라이스만 한 폴더에 넣어 다시 업로드해 주세요. "
+                        "압축 DICOM이라면 비압축 Explicit VR Little Endian 형식으로 내보낸 파일을 권장합니다."
+                    )
+                    st.caption(f"변환 상세: {exc}")
+                    st.stop()
                 nifti_validation = validate_nifti(nifti_payload, nifti_name)
                 if not nifti_validation.valid:
                     st.error(nifti_validation.message)

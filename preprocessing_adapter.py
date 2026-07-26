@@ -94,26 +94,83 @@ def convert_dicom_folder(files: list[tuple[str, bytes]], selected_uid: str) -> t
         source, output = root / "source", root / "nifti"
         source.mkdir(); output.mkdir()
         written = 0
+        selected_datasets = []
         for _, payload in files:
             try:
-                ds = pydicom.dcmread(io.BytesIO(payload), stop_before_pixels=True, force=True)
+                ds = pydicom.dcmread(io.BytesIO(payload), force=True)
                 if str(getattr(ds, "SeriesInstanceUID", "")) != selected_uid:
                     continue
                 (source / f"slice_{written:05d}.dcm").write_bytes(payload)
+                selected_datasets.append(ds)
                 written += 1
             except Exception:
                 continue
         if written < 2:
             raise ValueError("3D 변환에 필요한 DICOM 슬라이스가 부족합니다.")
-        dicom2nifti.convert_directory(str(source), str(output), compression=True, reorient=True)
+        primary_error = None
+        try:
+            dicom2nifti.convert_directory(str(source), str(output), compression=True, reorient=True)
+        except Exception as exc:
+            primary_error = exc
         candidates = sorted(output.glob("*.nii.gz")) + sorted(output.glob("*.nii"))
         if not candidates:
-            raise RuntimeError("DICOM 시리즈를 NIfTI로 변환하지 못했습니다.")
+            try:
+                payload = _stack_dicom_series(selected_datasets)
+                return payload, "patient_t2_converted.nii.gz"
+            except Exception as fallback_error:
+                detail = str(primary_error or "변환 결과 파일 없음")
+                raise RuntimeError(
+                    "DICOM 시리즈를 NIfTI로 변환하지 못했습니다. "
+                    f"기본 변환: {detail} / 보조 변환: {fallback_error}"
+                ) from fallback_error
         path = candidates[0]
         payload = path.read_bytes()
         if path.suffix.lower() == ".nii":
             payload = gzip.compress(payload)
         return payload, "patient_t2_converted.nii.gz"
+
+
+def _stack_dicom_series(datasets: list[pydicom.dataset.Dataset]) -> bytes:
+    def slice_position(ds: pydicom.dataset.Dataset) -> float:
+        position = getattr(ds, "ImagePositionPatient", None)
+        if position is not None and len(position) >= 3:
+            return float(position[2])
+        return float(getattr(ds, "InstanceNumber", 0))
+
+    ordered = sorted(datasets, key=slice_position)
+    slices = []
+    expected_shape = None
+    for ds in ordered:
+        pixels = np.asarray(ds.pixel_array, dtype=np.float32)
+        if pixels.ndim != 2:
+            raise ValueError(f"2D 슬라이스가 아닙니다: shape={pixels.shape}")
+        if expected_shape is None:
+            expected_shape = pixels.shape
+        elif pixels.shape != expected_shape:
+            raise ValueError("DICOM 슬라이스 크기가 서로 다릅니다.")
+        slope = float(getattr(ds, "RescaleSlope", 1.0))
+        intercept = float(getattr(ds, "RescaleIntercept", 0.0))
+        slices.append(pixels * slope + intercept)
+    if len(slices) < 2:
+        raise ValueError("픽셀을 읽을 수 있는 DICOM 슬라이스가 부족합니다.")
+
+    volume = np.stack(slices, axis=-1).transpose(1, 0, 2)
+    first = ordered[0]
+    pixel_spacing = getattr(first, "PixelSpacing", [1.0, 1.0])
+    x_spacing = float(pixel_spacing[1])
+    y_spacing = float(pixel_spacing[0])
+    positions = [slice_position(ds) for ds in ordered]
+    nonzero_steps = [
+        abs(right - left)
+        for left, right in zip(positions, positions[1:])
+        if abs(right - left) > 1e-6
+    ]
+    z_spacing = float(np.median(nonzero_steps)) if nonzero_steps else float(
+        getattr(first, "SpacingBetweenSlices", getattr(first, "SliceThickness", 1.0))
+    )
+    affine = np.diag([x_spacing, y_spacing, max(z_spacing, 1e-6), 1.0])
+    nifti = nib.Nifti1Image(volume, affine)
+    return gzip.compress(nifti.to_bytes())
 
 
 def _nifti_from_bytes(payload: bytes, filename: str) -> nib.Nifti1Image:
