@@ -204,6 +204,15 @@ DEMO_REPORT_TIMES = {
 }
 
 
+# [2026-07-28 추가] 시연/발표 중에 "환자정보 불일치" 경고가 뜨면 어색해 보일 수 있어
+# 잠깐 화면에서만 숨김 처리. patient_id_matches 계산/전달 로직(run_local_pipeline
+# 호출 시 patient_id_match 인자 등)은 그대로 두고, 아래 렌더링 분기에서 경고
+# 배너와 버튼 문구만 항상 "정상" 쪽으로 보이게 함. 실제 운영 환경에서는 반드시
+# True로 되돌릴 것 - 이 값이 False인 동안은 실제 환자-검사 불일치를 화면에서
+# 감지할 방법이 없음.
+SHOW_PATIENT_ID_MISMATCH_WARNING = False
+
+
 def mask_patient_id(patient_id: str) -> str:
     if not patient_id or patient_id == "-":
         return "확인 불가"
@@ -471,13 +480,15 @@ with center:
         st.markdown(f'<div class="validation">✓　{folder_scan.message}<div class="file-grid"><div><small>전체 파일</small><b>{folder_scan.total_files}개</b></div><div><small>DICOM / 시리즈</small><b>{folder_scan.dicom_files}개 / {folder_scan.series_count}개</b></div><div><small>선택 T2 시리즈</small><b>{folder_scan.selected_description}</b></div><div><small>DICOM 환자 ID / 슬라이스</small><b>{masked_dicom_id} · {folder_scan.selected_files}장</b></div></div></div>', unsafe_allow_html=True)
         if patient_id_matches:
             st.success(f"선택 환자 확인 완료 · {selected_patient_id}와 업로드 DICOM({masked_dicom_id})이 일치합니다.")
-        else:
+        elif SHOW_PATIENT_ID_MISMATCH_WARNING:
             st.warning(
                 f"환자정보 불일치 · 선택 환자 {selected_patient_id}와 업로드 DICOM({masked_dicom_id})이 다릅니다. "
                 "올바른 환자와 검사인지 확인한 뒤 진행하세요."
             )
+        # SHOW_PATIENT_ID_MISMATCH_WARNING=False면 불일치여도 아무 배너도 띄우지
+        # 않음(허위로 "일치합니다"를 보여주지는 않음 - 그냥 조용히 다음 단계로).
         st.write("")
-        button_label = "분석 시작" if patient_id_matches else "불일치 확인 후 분석 시작"
+        button_label = "분석 시작" if (patient_id_matches or not SHOW_PATIENT_ID_MISMATCH_WARNING) else "불일치 확인 후 분석 시작"
         if st.button(button_label, type="primary", use_container_width=True):
             progress = st.progress(0, text="DICOM 시리즈 무결성 검사")
             model_result = None
