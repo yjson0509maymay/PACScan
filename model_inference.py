@@ -85,6 +85,60 @@ def model_inference_status(app_root: Path | None = None) -> ModelInferenceStatus
     return ModelInferenceStatus(ready, str(ckpt) if ckpt else "", message)
 
 
+_feature_module = None
+_feature_module_root = None
+_feature_models = None
+
+
+def _load_feature_extraction_module(braintensor_root: Path):
+    """[2026-07-28 추가] CCA/WOA 앙상블 준비 단계 - 04_Feature_Engineering/
+    extract_features.py를 실제 파일 위치 그대로 동적 로드(_load_inference_module과
+    동일한 패턴). 이 모듈의 CNN_CKPT/RESNET_CKPT(하드코딩된 특정 체크포인트 파일명)를
+    그대로 재사용해야 함 - CCA 변환기가 그 체크포인트들의 FC1/FC2/FC4 특징 분포로
+    학습되므로, PACScan 쪽에서 "최신 체크포인트 자동 탐색" 로직(_discover_checkpoint)을
+    따로 쓰면 CCA 입력 분포가 달라져 buggy해짐. 반드시 extract_features.py가 가리키는
+    바로 그 체크포인트를 써야 함."""
+    global _feature_module, _feature_module_root
+    if _feature_module is not None and _feature_module_root == braintensor_root:
+        return _feature_module
+    script = braintensor_root / "04_Feature_Engineering" / "extract_features.py"
+    spec = importlib.util.spec_from_file_location("braintensor_extract_features", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"특징 추출 코드를 불러올 수 없습니다: {script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _feature_module = module
+    _feature_module_root = braintensor_root
+    return module
+
+
+def extract_ensemble_features(nifti_bytes: bytes, app_root: Path | None = None) -> dict:
+    """[2026-07-28 추가] CNN(Variant3)+ResNet 특징(FV-3/FV-4)을 신규 환자 1명의
+    업로드 볼륨에서 추출 - CCA/WOA 앙상블 추론의 1단계. 아직 CCA 변환기·WOA
+    선택마스크·최종 분류기가 파일로 저장돼 있지 않아(04_Feature_Engineering/
+    run_real_pipeline.py가 원래 일괄평가용이라 이들을 저장 안 함) 이 함수는
+    fv3/fv4까지만 반환한다 - CCA/WOA 학습이 끝나고 그 산출물을 저장하는 후속
+    작업이 끝나야 실제 앙상블 예측(run_ensemble_inference 같은 함수)을 완성할 수
+    있다. 지금은 검증된 특징추출 단계 하나만 독립적으로 완결된 상태.
+    """
+    global _feature_models
+    root = _braintensor_root(app_root)
+    fe = _load_feature_extraction_module(root)
+    if _feature_models is None:
+        cnn, _ = fe.load_cnn()
+        resnet, _ = fe.load_resnet()
+        _feature_models = (cnn, resnet)
+    cnn, resnet = _feature_models
+
+    raw = gzip.decompress(nifti_bytes) if nifti_bytes[:2] == b"\x1f\x8b" else nifti_bytes
+    img = nib.Nifti1Image.from_bytes(raw)
+    volume = np.asarray(img.dataobj, dtype=np.float32)
+
+    fv3, fv4 = fe.extract_single(cnn, resnet, volume, device=fe.device)
+    return {"fv3": fv3, "fv4": fv4}
+
+
 _inference_module = None
 _inference_module_root = None
 
@@ -121,13 +175,26 @@ def _jet_like(gray: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1)
 
 
-def _overlay_slice_png(volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.6) -> str:
+def _overlay_slice_png(
+    volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.75,
+    cam_floor: float = 0.0,
+) -> str:
+    """[2026-07-28 수정] 실측 확인 결과, 이 모델(Variant3, 212개 샘플로만 학습)의
+    Grad-CAM은 흑질처럼 좁은 부위가 아니라 뇌 전체에 걸쳐 넓게 반응함(중앙값 0.35~0.4,
+    상위 25%가 0.5 이상) - 이걸 그대로 선형(alpha=heat*0.6)으로 칠하면 뇌 전체가
+    칠해진 것처럼 보여 사용자가 혼란스러워함. cam_floor(호출부에서 그 볼륨의 상위
+    percentile로 계산해 넘김)보다 낮은 값은 거의 안 보이게 눌러서, 상대적으로 가장
+    강하게 반응한 영역만 도드라지게 함 - 신호 자체를 바꾸는 게 아니라 "상대적으로
+    어디가 더 강한지"를 시각적으로 알아보기 쉽게 강조하는 것뿐(percentile 임계값은
+    이 볼륨 자체의 분포에서 계산 - 절대적인 "이 부위가 흑질이다" 판정이 아님)."""
     index = volume.shape[axis] // 2
     base = np.rot90(np.take(volume, index, axis=axis))
     heat = np.rot90(np.take(cam, index, axis=axis))
     lo, hi = float(base.min()), float(base.max())
     base_n = (base - lo) / (hi - lo) if hi > lo else np.zeros_like(base)
     heat_n = np.clip(heat, 0.0, 1.0)
+    if cam_floor > 0.0:
+        heat_n = np.clip((heat_n - cam_floor) / max(1e-6, 1.0 - cam_floor), 0.0, 1.0) ** 1.5
     base_rgb = np.stack([base_n] * 3, axis=-1) * 255.0
     heat_rgb = _jet_like(heat_n)
     alpha = (heat_n * cam_alpha_max)[..., None]
@@ -184,10 +251,15 @@ def _run_local_inference(nifti_bytes: bytes, status: ModelInferenceStatus, app_r
     cam = prediction["cam"]
     pred_label = prediction["pred_label"]
 
+    # [2026-07-28 추가] 이 볼륨 CAM의 상위 활성값만 강조 - 실측 확인 결과 이 모델의
+    # CAM은 중앙값이 0.35~0.4로 뇌 전체에 넓게 반응해서, 그대로 칠하면 뇌 전체가
+    # 물든 것처럼 보여 사용자가 혼란스러워함(스크린샷으로 확인/피드백 받음). 상위
+    # 80퍼센타일을 기준으로 그 아래는 거의 안 보이게 눌러 상대적 강조 영역만 도드라지게 함.
+    cam_floor = float(np.percentile(cam, 80))
     cam_views = [
-        _overlay_slice_png(volume, cam, axis=2),  # 축상(axial)
-        _overlay_slice_png(volume, cam, axis=1),  # 관상(coronal)
-        _overlay_slice_png(volume, cam, axis=0),  # 시상(sagittal)
+        _overlay_slice_png(volume, cam, axis=2, cam_floor=cam_floor),  # 축상(axial)
+        _overlay_slice_png(volume, cam, axis=1, cam_floor=cam_floor),  # 관상(coronal)
+        _overlay_slice_png(volume, cam, axis=0, cam_floor=cam_floor),  # 시상(sagittal)
     ]
 
     return {

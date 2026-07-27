@@ -218,13 +218,22 @@ def _jet_like(gray: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1)
 
 
-def _overlay_slice_png(volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.6) -> str:
+def _overlay_slice_png(
+    volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.75,
+    cam_floor: float = 0.0,
+) -> str:
+    """[2026-07-28 수정] model_inference.py와 동일한 수정 - 실측 확인 결과 이 모델의
+    Grad-CAM이 뇌 전체에 넓게 반응해서(중앙값 0.35~0.4) 선형 alpha로는 뇌 전체가
+    칠해진 것처럼 보임. cam_floor(호출부에서 이 볼륨의 상위 percentile로 계산)보다
+    낮은 값은 거의 안 보이게 눌러 상대적으로 가장 강한 영역만 강조."""
     index = volume.shape[axis] // 2
     base = np.rot90(np.take(volume, index, axis=axis))
     heat = np.rot90(np.take(cam, index, axis=axis))
     lo, hi = float(base.min()), float(base.max())
     base_n = (base - lo) / (hi - lo) if hi > lo else np.zeros_like(base)
     heat_n = np.clip(heat, 0.0, 1.0)
+    if cam_floor > 0.0:
+        heat_n = np.clip((heat_n - cam_floor) / max(1e-6, 1.0 - cam_floor), 0.0, 1.0) ** 1.5
     base_rgb = np.stack([base_n] * 3, axis=-1) * 255.0
     heat_rgb = _jet_like(heat_n)
     alpha = (heat_n * cam_alpha_max)[..., None]
@@ -258,10 +267,11 @@ def run_cloud_inference(nifti_bytes: bytes) -> dict:
     cam = np.clip(zoom(cam, zoom_factors, order=1), 0.0, 1.0)
 
     pred_label = CLASS_NAMES[pred_idx]
+    cam_floor = float(np.percentile(cam, 80))
     cam_views = [
-        _overlay_slice_png(volume, cam, axis=2),
-        _overlay_slice_png(volume, cam, axis=1),
-        _overlay_slice_png(volume, cam, axis=0),
+        _overlay_slice_png(volume, cam, axis=2, cam_floor=cam_floor),
+        _overlay_slice_png(volume, cam, axis=1, cam_floor=cam_floor),
+        _overlay_slice_png(volume, cam, axis=0, cam_floor=cam_floor),
     ]
 
     return {
