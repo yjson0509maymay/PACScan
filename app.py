@@ -495,11 +495,6 @@ with center:
                     st.exception(exc)
                     st.stop()
                 progress.progress(94, text="AI 모델 추론(Variant3 + Grad-CAM)")
-                try:
-                    model_result = run_model_inference(prep["output_bytes"], ROOT)
-                    model_connected = True
-                except Exception as exc:
-                    st.info(f"실제 AI 모델 추론을 사용할 수 없어 시연용 결과를 표시합니다: {exc}")
             elif Path(local_status.script).is_file():
                 st.error(f"실제 전처리 환경이 아직 완성되지 않았습니다. {local_status.message}")
                 st.stop()
@@ -527,6 +522,18 @@ with center:
                 prep.update(pipeline_mode="cloud_lightweight", pipeline_version="deployable_v1", run_id="session_only")
                 progress.progress(82, text="56×56×56 리사이즈 및 QC")
                 time.sleep(.25); progress.progress(100, text="경량 전처리 완료")
+
+            # [2026-07-27 수정] 이전에는 이 호출이 local_status.ready 분기 안에만 있어
+            # Streamlit Cloud(local_status.ready 항상 False - BRAINTENSOR 전체 전처리
+            # 없음)에서는 cloud_model.py 폴백이 있어도 아예 시도조차 되지 않았음.
+            # prep(로컬/Cloud 경량 전처리 어느 쪽이든 output_bytes 동일 형식)이 준비되면
+            # 항상 시도 - model_inference.py가 로컬→Cloud(HF Hub) 순으로 알아서 처리.
+            try:
+                model_result = run_model_inference(prep["output_bytes"], ROOT)
+                model_connected = True
+            except Exception as exc:
+                st.info(f"실제 AI 모델 추론을 사용할 수 없어 시연용 결과를 표시합니다: {exc}")
+
             st.session_state.prep = prep
             st.session_state.model_result = model_result
             st.session_state.model_connected = model_connected
