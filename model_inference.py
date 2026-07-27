@@ -144,11 +144,27 @@ def run_model_inference(nifti_bytes: bytes, app_root: Path | None = None) -> dic
     반환 dict: normal/prodromal/pd(0~100 정수), finding/rationale(str),
     pred_label(str), cam_views(축상/관상/시상 3장, data URL), checkpoint(str),
     test_accuracy(체크포인트 저장 당시 test accuracy, float|None).
+
+    [2026-07-27 추가] 로컬(옆 폴더 BRAINTENSOR 체크아웃)이 없으면 - 예: 실제
+    Streamlit Community Cloud 배포 환경 - cloud_model.py(Hugging Face Hub에서
+    체크포인트를 내려받는 자체완결 버전)로 자동 폴백함. app.py는 이 함수 하나만
+    부르면 되고 로컬/Cloud 구분을 신경 쓸 필요 없음.
     """
+    local_status = model_inference_status(app_root)
+    if local_status.ready:
+        return _run_local_inference(nifti_bytes, local_status, app_root)
+
+    from cloud_model import cloud_model_status, run_cloud_inference
+
+    cloud_status = cloud_model_status()
+    if cloud_status.ready:
+        return run_cloud_inference(nifti_bytes)
+
+    raise RuntimeError(f"로컬 모델({local_status.message}) / Cloud 모델({cloud_status.message}) 둘 다 사용 불가")
+
+
+def _run_local_inference(nifti_bytes: bytes, status: ModelInferenceStatus, app_root: Path | None = None) -> dict:
     root = _braintensor_root(app_root)
-    status = model_inference_status(app_root)
-    if not status.ready:
-        raise RuntimeError(status.message)
 
     import torch  # 이 함수가 실제로 호출될 때만 필요 - 모듈 최상단에서 import하면
     # torch 미설치 환경(app.py의 다른 화면들)에서도 import 실패로 앱 전체가 죽음.
