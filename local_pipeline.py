@@ -43,16 +43,45 @@ def _configured_path(variable: str, default: Path) -> Path:
 
 
 def _discover_braintensor_script(app_root: Path | None = None) -> Path:
-    """Resolve env override first, then a sibling BRAINTENSOR checkout."""
+    """Resolve env override first, then auto-discover a BRAINTENSOR checkout nearby.
+
+    [2026-07-27 추가] 컴퓨터마다 로컬 BRAINTENSOR 체크아웃 폴더명이 다르거나
+    (예: "BRAINTENSOR" 대신 "new tensor"), PACScan 자체가 BRAINTENSOR 폴더 "안"에
+    중첩돼 있는 경우(예: D:\\new tensor\\PACScan\\PACScan)가 실제로 있었음 - 폴더
+    이름이나 형제 관계로 찾던 기존 방식은 이런 배치를 못 찾음. 이름 대신 "내용"
+    (SCRIPT_RELATIVE_PATH를 실제로 가지고 있는가)으로 식별하고, 형제 폴더뿐 아니라
+    조상 디렉터리(최대 5단계)와 각 조상의 형제 폴더까지 넓게 탐색함."""
     configured = os.environ.get("PACSCAN_BRAINTENSOR_SCRIPT")
     if configured:
         return Path(configured).expanduser()
     root = (app_root or Path(__file__).resolve().parent).resolve()
-    candidates = [
-        root.parent / "BRAINTENSOR" / SCRIPT_RELATIVE_PATH,
-        DEFAULT_SCRIPT,
-    ]
-    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+
+    named_candidate = root.parent / "BRAINTENSOR" / SCRIPT_RELATIVE_PATH
+    if named_candidate.is_file():
+        return named_candidate
+
+    current = root
+    for _ in range(5):
+        parent = current.parent
+        if parent == current:
+            break  # 파일시스템 루트 도달
+        # (a) 조상 자신이 BRAINTENSOR 체크아웃인 경우(PACScan이 그 안에 중첩된 경우)
+        direct = parent / SCRIPT_RELATIVE_PATH
+        if direct.is_file():
+            return direct
+        # (b) 그 조상의 형제 폴더들 중에 있는 경우(PACScan과 나란히 있는 경우)
+        try:
+            for sibling in sorted(parent.iterdir()):
+                if not sibling.is_dir() or sibling.resolve() == current.resolve():
+                    continue
+                candidate = sibling / SCRIPT_RELATIVE_PATH
+                if candidate.is_file():
+                    return candidate
+        except OSError:
+            pass
+        current = parent
+
+    return DEFAULT_SCRIPT
 
 
 def _has_antspyx() -> bool:

@@ -86,6 +86,8 @@ def generate_xai_pdf(
     generated_at: str,
     app_version: str,
     assets_dir: Path,
+    heatmap_src: str | None = None,
+    model_connected: bool = False,
 ) -> bytes:
     _register_font(assets_dir / "fonts" / "NotoSansKR-VF.ttf")
     output = io.BytesIO()
@@ -174,18 +176,29 @@ def generate_xai_pdf(
     )
     full_pipeline = prep.get("pipeline_mode") == "local_full"
     pipeline_name = "BRAINTENSOR ref21order_v1" if full_pipeline else "PACScan 배포용 전처리"
+    if model_connected:
+        summary_text = (
+            "본 보고서는 전처리 결과와 실제 학습된 모델(Variant3)의 추론 결과를 바탕으로 자동 생성되었습니다. "
+            "논문 재현 목표 정확도(93.41%)에 아직 못 미치는 연구 프로토타입으로, "
+            "최종 판독과 진단은 담당 전문의의 임상적 판단을 우선합니다."
+        )
+        model_line = "<b>모델</b>　3D-CNN(Variant3) + Grad-CAM"
+        status_line = "<b>현재 상태</b>　모델 연결됨 · 실제 추론 결과"
+    else:
+        summary_text = (
+            "본 보고서는 전처리 결과와 현재 시연용 AI 결과를 바탕으로 자동 생성되었습니다. "
+            "최종 판독과 진단은 담당 전문의의 임상적 판단을 우선합니다."
+        )
+        model_line = "<b>예정 모델</b>　3D-CNN + 3D-ResNet / 다중 시점 어텐션"
+        status_line = "<b>현재 상태</b>　모델 연결 전 시연용 결과"
     model_info = [
         Paragraph("<b>AI 보조 판독 요약</b>", section),
-        Paragraph(
-            "본 보고서는 전처리 결과와 현재 시연용 AI 결과를 바탕으로 자동 생성되었습니다. "
-            "최종 판독과 진단은 담당 전문의의 임상적 판단을 우선합니다.",
-            normal,
-        ),
+        Paragraph(summary_text, normal),
         Spacer(1, 3 * mm),
         Paragraph(f"<b>전처리</b>　{pipeline_name}", normal),
         Paragraph(f"<b>실행 ID</b>　{prep.get('run_id', '세션 전용')}", small),
-        Paragraph("<b>예정 모델</b>　3D-CNN + 3D-ResNet / 다중 시점 어텐션", normal),
-        Paragraph("<b>현재 상태</b>　모델 연결 전 시연용 결과", normal),
+        Paragraph(model_line, normal),
+        Paragraph(status_line, normal),
     ]
     top = Table(
         [
@@ -211,15 +224,17 @@ def generate_xai_pdf(
     )
 
     original = Image(io.BytesIO(_image_bytes(original_src)), width=78 * mm, height=67 * mm, kind="proportional")
+    heatmap_source = heatmap_src if heatmap_src else (assets_dir / "sample_t2_mri.png")
     heatmap = Image(
-        io.BytesIO(_image_bytes(assets_dir / "sample_t2_mri.png")),
+        io.BytesIO(_image_bytes(heatmap_source)),
         width=78 * mm,
         height=67 * mm,
         kind="proportional",
     )
+    heatmap_caption = "AI 분석 결과 (Grad-CAM 히트맵)" if model_connected else "AI 분석 결과 (시연용 히트맵)"
     image_table = Table(
         [
-            [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph("<b>AI 분석 결과 (시연용 히트맵)</b>", center)],
+            [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph(f"<b>{heatmap_caption}</b>", center)],
             [original, heatmap],
         ],
         colWidths=[88 * mm, 88 * mm],

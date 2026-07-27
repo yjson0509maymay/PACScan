@@ -1,3 +1,8 @@
 -r requirements.txt
 antspyx==0.6.3
+# [2026-07-27 추가] model_inference.py가 BRAINTENSOR의 09_Service/inference.py를
+# 그대로 재사용해 실제 Variant3 모델 추론 + Grad-CAM을 수행하려면 torch가 필요함.
+# Streamlit Cloud(requirements.txt)에는 아직 추가하지 않음 - 체크포인트(148MB)
+# 호스팅 방식을 먼저 정해야 함(로컬 실행 전용 1단계).
+torch>=2.0
 
