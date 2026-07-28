@@ -33,6 +33,12 @@ from scipy.ndimage import zoom
 
 HF_REPO_ID = "yjson0509maymay/braintensor-variant3"
 HF_CHECKPOINT_FILENAME = "ablation_variant3_20260726_035445_acc50.0.pt"
+# [2026-07-28 추가] 4개 모델 앙상블(CNN+ResNet+CCA(동료 J)+WOA)용 - 같은 HF Hub
+# 저장소에 함께 업로드.
+HF_RESNET_CHECKPOINT_FILENAME = "resnet3d_20260722_170643_acc54.3.pt"
+HF_ENSEMBLE_CCA_FILENAME = "ensemble_J_cca_transformer.joblib"
+HF_ENSEMBLE_MASK_FILENAME = "ensemble_J_woa_mask.npy"
+HF_ENSEMBLE_CLASSIFIER_FILENAME = "ensemble_J_final_classifier.joblib"
 
 CLASS_LABEL_KR = {"Control": "정상", "Prodromal": "전구기", "PD": "파킨슨병 의심"}
 CLASS_NAMES = ["Control", "Prodromal", "PD"]
@@ -110,6 +116,131 @@ class CNN3D_Variant3(nn.Module):
         if return_features:
             return logits, {"fc1": fc1_feat, "fc2": fc2_feat, "fv3": fv3}
         return logits
+
+
+# ============================================================
+# ResNet3D - BRAINTENSOR의 02_Model_Definition/final_resnet.py와 동일(Model-2,
+# Figure3 사양, 15-layer). [2026-07-28 추가] 4개 모델(CNN+ResNet+CCA+WOA) 앙상블을
+# Cloud에서도 쓰기 위해 이식(체크포인트 resnet3d_20260722_170643_acc54.3.pt도
+# Hugging Face Hub에 함께 업로드).
+# ============================================================
+class ResidualUnit3D(nn.Module):
+    def __init__(self, in_ch, out_ch, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv3d(in_ch, out_ch, kernel_size=3, stride=stride, padding=1)
+        self.bn1 = nn.BatchNorm3d(out_ch)
+        self.conv2 = nn.Conv3d(out_ch, out_ch, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm3d(out_ch)
+        self.relu = nn.ReLU(inplace=True)
+        if stride != 1 or in_ch != out_ch:
+            self.skip = nn.Sequential(
+                nn.Conv3d(in_ch, out_ch, kernel_size=1, stride=stride),
+                nn.BatchNorm3d(out_ch),
+            )
+        else:
+            self.skip = nn.Identity()
+
+    def forward(self, x):
+        identity = self.skip(x)
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out = out + identity
+        return self.relu(out)
+
+
+class ResidualBlock3D(nn.Module):
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.unit0 = ResidualUnit3D(in_ch, out_ch, stride=1)
+        self.unit1 = ResidualUnit3D(out_ch, out_ch, stride=1)
+        self.unit2 = ResidualUnit3D(out_ch, out_ch, stride=1)
+
+    def forward(self, x):
+        x = self.unit0(x)
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
+
+
+class ResNet3D(nn.Module):
+    def __init__(self, num_classes=3, in_channels=1, dropout=0.5):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv3d(in_channels, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm3d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm3d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.block0 = ResidualBlock3D(64, 64)
+        self.pool0 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.block1 = ResidualBlock3D(64, 128)
+        self.pool1 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.block2 = ResidualBlock3D(128, 256)
+        self.pool2 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.block3 = ResidualBlock3D(256, 512)
+        self.pool3 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.block4 = ResidualBlock3D(512, 512)
+        self.pool4 = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.fc4 = nn.Linear(512, 1000)
+        self.dropout = nn.Dropout(p=dropout)
+        self.classifier = nn.Linear(1000, num_classes)
+
+    def forward(self, x, return_features=False):
+        x = self.stem(x)
+        x = self.pool0(self.block0(x))
+        x = self.pool1(self.block1(x))
+        x = self.pool2(self.block2(x))
+        x = self.pool3(self.block3(x))
+        x = self.pool4(self.block4(x))
+        x = torch.flatten(x, start_dim=1)
+        fc4_feat = self.fc4(x)
+        logits = self.classifier(self.dropout(fc4_feat))
+        if return_features:
+            return logits, {"fc4": fc4_feat}
+        return logits
+
+
+# ============================================================
+# CCA - 동료 J의 IndependentPCARCCA 구현. cca_ridge_J.py(이 저장소 내 별도 파일,
+# 04_Feature_Engineering/cca_ridge_J.py와 동일 내용)에서 그대로 import.
+# [중요] 클래스를 여기 인라인으로 재정의하지 않고 반드시 "import"해야 함 - joblib/
+# pickle은 클래스를 모듈 경로(예: cca_ridge_J.IndependentPCARCCA)로 참조하므로,
+# 저장된 CCA 변환기를 역직렬화하려면 실행 환경에 "cca_ridge_J"라는 이름의 모듈이
+# 그대로 있어야 함(클래스 코드만 복사해서 cloud_model 안에 두면 모듈 경로가 달라져
+# 역직렬화가 실패함).
+# ============================================================
+from cca_ridge_J import RidgeCCA, ViewReducer, IndependentPCARCCA  # noqa: F401
+
+
+def algorithm1_feature_concatenation(x1: np.ndarray, x2: np.ndarray, w1: float = 1.0, w2: float = 1.0) -> np.ndarray:
+    """04_Feature_Engineering/extract_features.py의 Algorithm1(FV-3 계산)과 동일 -
+    CNN의 FC-1/FC-2에서 논문 Algorithm1(원소별 최댓값 선택)로 FV-3(1000차원)를 만듦."""
+    n, d = x1.shape
+
+    def znorm(a):
+        mu = a.mean(axis=1, keepdims=True)
+        sd = a.std(axis=1, keepdims=True) + 1e-8
+        return (a - mu) / sd
+
+    x1n, x2n = znorm(x1), znorm(x2)
+    x3 = np.zeros_like(x1)
+    for i in range(n):
+        used = set()
+        for j in range(d):
+            wv1, wv2 = w1 * x1n[i, j], w2 * x2n[i, j]
+            v1, v2 = x1[i, j], x2[i, j]
+            if wv1 > wv2 and v1 not in used:
+                x3[i, j] = v1
+                used.add(v1)
+            elif wv2 >= wv1 and v2 not in used:
+                x3[i, j] = v2
+                used.add(v2)
+            else:
+                x3[i, j] = max(v1, v2)
+                used.add(x3[i, j])
+    return x3
 
 
 # ============================================================
@@ -305,4 +436,106 @@ def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = 
         "display_volume": display_volume,
         "display_cam": display_cam,
         "cam_floor": cam_floor,
+        "is_ensemble": False,
     }
+
+
+_cached_resnet = None
+_cached_ensemble_artifacts = None
+
+
+def _load_resnet_model(device: str):
+    global _cached_resnet
+    if _cached_resnet is not None:
+        return _cached_resnet
+    from huggingface_hub import hf_hub_download
+
+    ckpt_path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_RESNET_CHECKPOINT_FILENAME)
+    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model = ResNet3D(num_classes=checkpoint.get("num_classes", 3)).to(device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    _cached_resnet = (model, checkpoint)
+    return _cached_resnet
+
+
+def _load_ensemble_artifacts():
+    """[2026-07-28 추가] 4개 모델 앙상블(CNN+ResNet+CCA(동료 J)+WOA)용 CCA 변환기/
+    WOA 마스크/최종 분류기를 Hugging Face Hub에서 다운로드. cca_ridge_J 모듈이
+    아니라 이 파일(cloud_model.py) 자체에 IndependentPCARCCA 등을 이식해뒀으므로,
+    joblib이 이 모듈(cloud_model)을 참조해서 정상적으로 역직렬화 가능하려면
+    04_Feature_Engineering/build_ensemble_J_cca.py로 저장할 때와 클래스 코드가
+    동일해야 함(실제로 동일 - 위 클래스 정의 그대로 복사)."""
+    global _cached_ensemble_artifacts
+    if _cached_ensemble_artifacts is not None:
+        return _cached_ensemble_artifacts
+    from huggingface_hub import hf_hub_download
+    import joblib
+
+    cca_path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_ENSEMBLE_CCA_FILENAME)
+    mask_path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_ENSEMBLE_MASK_FILENAME)
+    clf_path = hf_hub_download(repo_id=HF_REPO_ID, filename=HF_ENSEMBLE_CLASSIFIER_FILENAME)
+    cca = joblib.load(cca_path)
+    mask = np.load(mask_path)
+    clf = joblib.load(clf_path)
+    _cached_ensemble_artifacts = (cca, mask, clf)
+    return _cached_ensemble_artifacts
+
+
+def cloud_ensemble_status() -> CloudModelStatus:
+    """4개 모델 앙상블에 필요한 파일들이 HF Hub에서 실제로 받아지는지 확인."""
+    try:
+        import huggingface_hub  # noqa: F401
+        import joblib  # noqa: F401
+    except ImportError as exc:
+        return CloudModelStatus(False, f"필요 패키지 미설치: {exc}")
+    try:
+        from huggingface_hub import hf_hub_download
+        hf_hub_download(repo_id=HF_REPO_ID, filename=HF_ENSEMBLE_CCA_FILENAME)
+        hf_hub_download(repo_id=HF_REPO_ID, filename=HF_RESNET_CHECKPOINT_FILENAME)
+    except Exception as exc:
+        return CloudModelStatus(False, f"앙상블 아티팩트를 HF Hub에서 찾을 수 없음: {exc}")
+    return CloudModelStatus(True, "4개 모델 앙상블 준비 완료(Hugging Face Hub)")
+
+
+def run_cloud_ensemble_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = None) -> dict:
+    """[2026-07-28 추가] Cloud에서도 4개 모델(CNN+ResNet+CCA(동료 J)+WOA) 앙상블을
+    쓰기 위한 추론. M3d-CAM 시각화는 run_cloud_inference()와 동일하게 CNN 자체의
+    Grad-CAM을 그대로 쓰고, 최종 확률/예측 클래스만 앙상블 분류기로 교체."""
+    cnn_result = run_cloud_inference(nifti_bytes, overlay_nifti_bytes)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    cnn_model, _ = _load_model(device)
+    resnet_model, _ = _load_resnet_model(device)
+    cca, mask, clf = _load_ensemble_artifacts()
+
+    raw = gzip.decompress(nifti_bytes) if nifti_bytes[:2] == b"\x1f\x8b" else nifti_bytes
+    img = nib.Nifti1Image.from_bytes(raw)
+    volume = np.asarray(img.dataobj, dtype=np.float32)
+    x = torch.tensor(volume, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        _, cnn_feats = cnn_model(x, return_features=True)
+        _, resnet_feats = resnet_model(x, return_features=True)
+    fc1 = cnn_feats["fc1"].cpu().numpy()
+    fc2 = cnn_feats["fc2"].cpu().numpy()
+    fv4 = resnet_feats["fc4"].cpu().numpy()
+    fv3 = algorithm1_feature_concatenation(fc1, fc2)
+
+    z = cca.transform_fused(fv3, fv4, n_components=10, fusion="concat")
+    probs = clf.predict_proba(z[:, mask])[0]
+    pred_idx = int(np.argmax(probs))
+    pred_label = CLASS_NAMES[pred_idx]
+
+    result = dict(cnn_result)
+    result.update({
+        "normal": round(float(probs[0]) * 100),
+        "prodromal": round(float(probs[1]) * 100),
+        "pd": round(float(probs[2]) * 100),
+        "pred_label": pred_label,
+        "pred_label_kr": CLASS_LABEL_KR.get(pred_label, pred_label),
+        "finding": FINDING_TEMPLATES.get(pred_label, FINDING_TEMPLATES["PD"]),
+        "checkpoint": f"CNN({HF_CHECKPOINT_FILENAME}) + ResNet({HF_RESNET_CHECKPOINT_FILENAME}) + CCA(J) + WOA (Hugging Face Hub)",
+        "is_ensemble": True,
+    })
+    return result

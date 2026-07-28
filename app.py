@@ -11,7 +11,7 @@ import streamlit as st
 
 from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, render_nifti_views, validate_nifti
 from local_pipeline import APP_VERSION, local_pipeline_status, run_local_pipeline
-from model_inference import model_inference_status, run_model_inference, ensemble_status, run_ensemble_inference
+from model_inference import model_inference_status, run_model_inference
 from pdf_report import generate_xai_pdf
 
 
@@ -608,15 +608,12 @@ with center:
             # prep(로컬/Cloud 경량 전처리 어느 쪽이든 output_bytes 동일 형식)이 준비되면
             # 항상 시도 - model_inference.py가 로컬→Cloud(HF Hub) 순으로 알아서 처리.
             try:
-                # [2026-07-28 추가] 4개 모델(CNN=우리/ResNet=우리/CCA=동료 J/WOA=우리)
-                # 앙상블을 먼저 시도 - 아티팩트가 로컬 BRAINTENSOR에만 있어(git 미포함)
-                # Cloud에서는 항상 실패하고 CNN 단독으로 자동 폴백됨. model_result에
-                # is_ensemble 플래그가 있어 실제로 뭐가 돌았는지 화면에 정확히 표시 가능
-                # (실제로 안 돈 걸 "4개 모델 결과"라고 속여 표시하지 않기 위함).
-                if ensemble_status(ROOT).ready:
-                    model_result = run_ensemble_inference(prep["output_bytes"], ROOT)
-                else:
-                    model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
+                # [2026-07-28 추가] run_model_inference() 내부에서 4개 모델(CNN=우리/
+                # ResNet=우리/CCA=동료 J/WOA=우리) 앙상블 우선 시도 -> 단독 CNN(로컬/
+                # Cloud) 순으로 자동 처리. model_result의 is_ensemble 플래그로 실제
+                # 뭐가 돌았는지 화면에 정확히 표시(실제로 안 돈 걸 "4개 모델 결과"라고
+                # 속여 표시하지 않기 위함).
+                model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
                 model_connected = True
                 st.session_state.model_inference_error = None
             except Exception as exc:

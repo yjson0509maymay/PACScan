@@ -11,3 +11,8 @@ reportlab>=4.4,<5
 # (Streamlit Community Cloud는 GPU 미제공, 56^3 단일 볼륨 추론이라 CPU로도 수 초 내 완료).
 torch>=2.0
 huggingface_hub>=0.20
+# [2026-07-28 추가] 4개 모델 앙상블(CNN+ResNet+CCA+WOA) - CCA 변환기/최종 분류기가
+# scikit-learn 객체(PCA/StandardScaler/GradientBoostingClassifier)를 joblib으로
+# 저장한 것이라 역직렬화에 필요.
+scikit-learn>=1.3
+joblib>=1.3

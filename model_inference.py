@@ -304,14 +304,22 @@ def run_model_inference(
     체크포인트를 내려받는 자체완결 버전)로 자동 폴백함. app.py는 이 함수 하나만
     부르면 되고 로컬/Cloud 구분을 신경 쓸 필요 없음.
     """
+    # [2026-07-28 추가] 4개 모델(CNN+ResNet+CCA(동료 J)+WOA) 앙상블이 준비돼 있으면
+    # 우선 사용 - 로컬/Cloud 둘 다 시도. app.py는 이 함수 하나만 부르면 되고
+    # 앙상블/단독, 로컬/Cloud 어느 조합인지 신경 쓸 필요 없음(is_ensemble 플래그로
+    # 실제 뭐가 돌았는지만 결과에서 확인).
     local_status = model_inference_status(app_root)
     if local_status.ready:
+        if ensemble_status(app_root).ready:
+            return run_ensemble_inference(nifti_bytes, app_root)
         return _run_local_inference(nifti_bytes, local_status, app_root, overlay_nifti_bytes)
 
-    from cloud_model import cloud_model_status, run_cloud_inference
+    from cloud_model import cloud_model_status, cloud_ensemble_status, run_cloud_inference, run_cloud_ensemble_inference
 
     cloud_status = cloud_model_status()
     if cloud_status.ready:
+        if cloud_ensemble_status().ready:
+            return run_cloud_ensemble_inference(nifti_bytes, overlay_nifti_bytes)
         return run_cloud_inference(nifti_bytes, overlay_nifti_bytes)
 
     raise RuntimeError(f"로컬 모델({local_status.message}) / Cloud 모델({cloud_status.message}) 둘 다 사용 불가")
