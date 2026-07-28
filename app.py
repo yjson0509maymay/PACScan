@@ -540,7 +540,7 @@ with center:
             # prep(로컬/Cloud 경량 전처리 어느 쪽이든 output_bytes 동일 형식)이 준비되면
             # 항상 시도 - model_inference.py가 로컬→Cloud(HF Hub) 순으로 알아서 처리.
             try:
-                model_result = run_model_inference(prep["output_bytes"], ROOT)
+                model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
                 model_connected = True
             except Exception as exc:
                 st.info(f"실제 AI 모델 추론을 사용할 수 없어 시연용 결과를 표시합니다: {exc}")

@@ -244,8 +244,11 @@ def _overlay_slice_png(
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
-def run_cloud_inference(nifti_bytes: bytes) -> dict:
-    """model_inference.run_model_inference()와 동일한 반환 형식."""
+def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = None) -> dict:
+    """model_inference.run_model_inference()와 동일한 반환 형식.
+    overlay_nifti_bytes: [2026-07-28 추가] CAM을 덮어씌울 배경(prep["cam_overlay_bytes"]) -
+    Cloud 경량 파이프라인은 정합 단계가 없어 원본과 56^3이 같은 좌표계이므로,
+    리사이즈 전(해상도 높은) 볼륨을 그대로 배경으로 써도 안전함."""
     status = cloud_model_status()
     if not status.ready:
         raise RuntimeError(status.message)
@@ -266,12 +269,22 @@ def run_cloud_inference(nifti_bytes: bytes) -> dict:
     zoom_factors = [s / c for s, c in zip(volume.shape, cam.shape)]
     cam = np.clip(zoom(cam, zoom_factors, order=1), 0.0, 1.0)
 
+    display_volume, display_cam = volume, cam
+    if overlay_nifti_bytes:
+        overlay_raw = gzip.decompress(overlay_nifti_bytes) if overlay_nifti_bytes[:2] == b"\x1f\x8b" else overlay_nifti_bytes
+        overlay_img = nib.Nifti1Image.from_bytes(overlay_raw)
+        overlay_volume = np.asarray(overlay_img.dataobj, dtype=np.float32)
+        if overlay_volume.shape != cam.shape:
+            overlay_zoom_factors = [s / c for s, c in zip(overlay_volume.shape, cam.shape)]
+            display_cam = np.clip(zoom(cam, overlay_zoom_factors, order=1), 0.0, 1.0)
+        display_volume = overlay_volume
+
     pred_label = CLASS_NAMES[pred_idx]
-    cam_floor = float(np.percentile(cam, 80))
+    cam_floor = float(np.percentile(display_cam, 80))
     cam_views = [
-        _overlay_slice_png(volume, cam, axis=2, cam_floor=cam_floor),
-        _overlay_slice_png(volume, cam, axis=1, cam_floor=cam_floor),
-        _overlay_slice_png(volume, cam, axis=0, cam_floor=cam_floor),
+        _overlay_slice_png(display_volume, display_cam, axis=2, cam_floor=cam_floor),
+        _overlay_slice_png(display_volume, display_cam, axis=1, cam_floor=cam_floor),
+        _overlay_slice_png(display_volume, display_cam, axis=0, cam_floor=cam_floor),
     ]
 
     return {

@@ -256,6 +256,12 @@ def preprocess_nifti(payload: bytes, filename: str) -> dict:
     new_affine[:3, :3] = canonical.affine[:3, :3] / factors
     output = nib.Nifti1Image(resized, new_affine)
     output_bytes = gzip.compress(output.to_bytes())
+    # [2026-07-28 추가] CAM(56^3) 덮어씌울 배경용 - Cloud 경량 파이프라인은 정합
+    # (registration) 단계가 없어(파일 상단 docstring 참조) original과 resized가
+    # 같은 좌표계라, 리사이즈 전(canonical+정규화, original과 동일 해상도) 볼륨을
+    # 그대로 써도 위치가 어긋나지 않는다 - 최종 56^3(블러 심함)보다 훨씬 선명함.
+    overlay = nib.Nifti1Image(normalized, canonical.affine)
+    overlay_bytes = gzip.compress(overlay.to_bytes())
     return {
         "original_shape": tuple(int(v) for v in original.shape),
         "final_shape": TARGET_SHAPE,
@@ -269,4 +275,5 @@ def preprocess_nifti(payload: bytes, filename: str) -> dict:
         "processed_name": filename.removesuffix(".gz").removesuffix(".nii") + "_preprocessed_56.nii.gz",
         "output_bytes": output_bytes,
         "output_name": filename.removesuffix(".gz").removesuffix(".nii") + "_preprocessed_56.nii.gz",
+        "cam_overlay_bytes": overlay_bytes,
     }

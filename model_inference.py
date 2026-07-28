@@ -205,8 +205,14 @@ def _overlay_slice_png(
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
-def run_model_inference(nifti_bytes: bytes, app_root: Path | None = None) -> dict:
+def run_model_inference(
+    nifti_bytes: bytes, app_root: Path | None = None, overlay_nifti_bytes: bytes | None = None,
+) -> dict:
     """nifti_bytes: gzip 압축된 56^3 NIfTI(PACScan prep["output_bytes"]).
+    overlay_nifti_bytes: [2026-07-28 추가] CAM을 덮어씌울 배경 볼륨(PACScan
+    prep["cam_overlay_bytes"]) - CAM과 같은 좌표계이면서 56^3보다 해상도가 높은
+    볼륨(정합 후·최종 리사이즈 전). 안 넘기면 기존처럼 56^3 볼륨 자체에 덮음
+    (해상도가 낮아 병변이 흐릿하게/뭉개져 보임 - 하위호환용 폴백).
 
     반환 dict: normal/prodromal/pd(0~100 정수), finding/rationale(str),
     pred_label(str), cam_views(축상/관상/시상 3장, data URL), checkpoint(str),
@@ -219,22 +225,26 @@ def run_model_inference(nifti_bytes: bytes, app_root: Path | None = None) -> dic
     """
     local_status = model_inference_status(app_root)
     if local_status.ready:
-        return _run_local_inference(nifti_bytes, local_status, app_root)
+        return _run_local_inference(nifti_bytes, local_status, app_root, overlay_nifti_bytes)
 
     from cloud_model import cloud_model_status, run_cloud_inference
 
     cloud_status = cloud_model_status()
     if cloud_status.ready:
-        return run_cloud_inference(nifti_bytes)
+        return run_cloud_inference(nifti_bytes, overlay_nifti_bytes)
 
     raise RuntimeError(f"로컬 모델({local_status.message}) / Cloud 모델({cloud_status.message}) 둘 다 사용 불가")
 
 
-def _run_local_inference(nifti_bytes: bytes, status: ModelInferenceStatus, app_root: Path | None = None) -> dict:
+def _run_local_inference(
+    nifti_bytes: bytes, status: ModelInferenceStatus, app_root: Path | None = None,
+    overlay_nifti_bytes: bytes | None = None,
+) -> dict:
     root = _braintensor_root(app_root)
 
     import torch  # 이 함수가 실제로 호출될 때만 필요 - 모듈 최상단에서 import하면
     # torch 미설치 환경(app.py의 다른 화면들)에서도 import 실패로 앱 전체가 죽음.
+    from scipy.ndimage import zoom as _zoom
 
     inf = _load_inference_module(root)
     ckpt_path = Path(status.checkpoint)
@@ -251,15 +261,28 @@ def _run_local_inference(nifti_bytes: bytes, status: ModelInferenceStatus, app_r
     cam = prediction["cam"]
     pred_label = prediction["pred_label"]
 
+    # [2026-07-28 추가] overlay_nifti_bytes가 있으면 56^3보다 해상도 높은(정합 후·
+    # 리사이즈 전) 볼륨에 병변을 덮는다 - CAM(56^3)을 그 볼륨 크기로 다시 확대.
+    display_volume = volume
+    display_cam = cam
+    if overlay_nifti_bytes:
+        overlay_raw = gzip.decompress(overlay_nifti_bytes) if overlay_nifti_bytes[:2] == b"\x1f\x8b" else overlay_nifti_bytes
+        overlay_img = nib.Nifti1Image.from_bytes(overlay_raw)
+        overlay_volume = np.asarray(overlay_img.dataobj, dtype=np.float32)
+        if overlay_volume.shape != cam.shape:
+            zoom_factors = [s / c for s, c in zip(overlay_volume.shape, cam.shape)]
+            display_cam = np.clip(_zoom(cam, zoom_factors, order=1), 0.0, 1.0)
+        display_volume = overlay_volume
+
     # [2026-07-28 추가] 이 볼륨 CAM의 상위 활성값만 강조 - 실측 확인 결과 이 모델의
     # CAM은 중앙값이 0.35~0.4로 뇌 전체에 넓게 반응해서, 그대로 칠하면 뇌 전체가
     # 물든 것처럼 보여 사용자가 혼란스러워함(스크린샷으로 확인/피드백 받음). 상위
     # 80퍼센타일을 기준으로 그 아래는 거의 안 보이게 눌러 상대적 강조 영역만 도드라지게 함.
-    cam_floor = float(np.percentile(cam, 80))
+    cam_floor = float(np.percentile(display_cam, 80))
     cam_views = [
-        _overlay_slice_png(volume, cam, axis=2, cam_floor=cam_floor),  # 축상(axial)
-        _overlay_slice_png(volume, cam, axis=1, cam_floor=cam_floor),  # 관상(coronal)
-        _overlay_slice_png(volume, cam, axis=0, cam_floor=cam_floor),  # 시상(sagittal)
+        _overlay_slice_png(display_volume, display_cam, axis=2, cam_floor=cam_floor),  # 축상(axial)
+        _overlay_slice_png(display_volume, display_cam, axis=1, cam_floor=cam_floor),  # 관상(coronal)
+        _overlay_slice_png(display_volume, display_cam, axis=0, cam_floor=cam_floor),  # 시상(sagittal)
     ]
 
     return {

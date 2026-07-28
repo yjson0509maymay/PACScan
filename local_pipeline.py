@@ -297,8 +297,15 @@ def run_local_pipeline(
         )
         final_path = output_dir / f"{name}.nii.gz"
         raw_path = output_dir / "_work" / name / f"{name}_00_raw.nii.gz"
+        # [2026-07-28 추가] 정합(registration) 직후 · 최종 56^3 리사이즈 직전 볼륨.
+        # CAM(56^3, 정합 후 좌표계)을 덮어씌울 배경으로 이걸 쓴다 - "원본"(정합 전,
+        # 좌표계가 아예 다름)에 덮으면 뇌 위치가 어긋나고, 최종 56^3(블러 심함)에
+        # 덮으면 병변이 흐릿해서 사용자가 "뇌 전체가 칠해진 것 같다"고 혼란스러워함.
+        # 정합 후·리사이즈 전 볼륨은 CAM과 같은 좌표계면서 해상도는 훨씬 높음.
+        norm_path = output_dir / "_work" / name / f"{name}_03_norm.nii.gz"
         final_bytes = final_path.read_bytes()
         raw_bytes = raw_path.read_bytes()
+        cam_overlay_bytes = norm_path.read_bytes() if norm_path.is_file() else final_bytes
         original_display = preprocess_nifti(raw_bytes, raw_path.name)
         final_display = preprocess_nifti(final_bytes, final_path.name)
         prep = final_display
@@ -312,6 +319,7 @@ def run_local_pipeline(
             "processed_name": final_path.name,
             "output_bytes": final_bytes,
             "output_name": final_path.name,
+            "cam_overlay_bytes": cam_overlay_bytes,
             "pipeline_mode": "local_full",
             "pipeline_version": PIPELINE_VERSION,
             "run_id": run_id,
