@@ -256,11 +256,19 @@ def preprocess_nifti(payload: bytes, filename: str) -> dict:
     new_affine[:3, :3] = canonical.affine[:3, :3] / factors
     output = nib.Nifti1Image(resized, new_affine)
     output_bytes = gzip.compress(output.to_bytes())
-    # [2026-07-28 추가] CAM(56^3) 덮어씌울 배경용 - Cloud 경량 파이프라인은 정합
-    # (registration) 단계가 없어(파일 상단 docstring 참조) original과 resized가
-    # 같은 좌표계라, 리사이즈 전(canonical+정규화, original과 동일 해상도) 볼륨을
-    # 그대로 써도 위치가 어긋나지 않는다 - 최종 56^3(블러 심함)보다 훨씬 선명함.
-    overlay = nib.Nifti1Image(normalized, canonical.affine)
+    # [2026-07-28 추가, 같은 날 수정] CAM(56^3) 덮어씌울 배경용.
+    # 처음엔 리사이즈 전 원본(canonical+정규화)을 그대로 썼는데, 실제 T2 임상
+    # 스캔은 평면 해상도는 높아도 슬라이스 수가 적은 경우가 많아(예: 18~30장)
+    # 관상면/시상면이 심하게 눌려 보이는 문제가 실측으로 확인됨(사용자 스크린샷).
+    # Cloud 경량 파이프라인은 정합(registration)이 없어 "정합 후 등방(isotropic)
+    # 볼륨"을 만들 방법이 없으므로, 대신 이미 등방인 최종 56^3을 3차 스플라인으로
+    # 매끄럽게 확대(224^3)해서 씀 - 새로운 해부학 정보가 생기진 않지만, 블록처럼
+    # 보이던 리사이즈 아티팩트는 없어지고 로컬 경로(정합 후 볼륨)처럼 등방성은 유지됨.
+    smooth_factor = 4
+    overlay_arr = zoom(resized, smooth_factor, order=3).astype(np.float32)
+    overlay_affine = new_affine.copy()
+    overlay_affine[:3, :3] = new_affine[:3, :3] / smooth_factor
+    overlay = nib.Nifti1Image(overlay_arr, overlay_affine)
     overlay_bytes = gzip.compress(overlay.to_bytes())
     return {
         "original_shape": tuple(int(v) for v in original.shape),
