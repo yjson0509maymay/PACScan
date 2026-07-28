@@ -219,17 +219,30 @@ def _slice_png(data: np.ndarray, axis: int) -> str:
 
 
 def _slice_png_at(data: np.ndarray, axis: int, index: int) -> str:
+    """[2026-07-29 병합, 동료 xai_rendering.py 계열 개선분 반영] robust 대비(1~99
+    percentile, 배경 0 제외) + 고해상도 업스케일(LANCZOS) - 기존엔 raw min/max라
+    두개골 등 소수 밝은 픽셀에 대비가 눌려 흐릿했음."""
     index = max(0, min(int(index), data.shape[axis] - 1))
-    plane = np.take(data, index, axis=axis)
-    plane = np.rot90(plane)
+    plane = np.rot90(np.take(data, index, axis=axis)).astype(np.float32)
     finite = plane[np.isfinite(plane)]
     if finite.size:
-        lo, hi = np.percentile(finite, [1, 99])
+        nonzero = finite[np.abs(finite) > 1e-8]
+        sample = nonzero if nonzero.size >= 128 else finite
+        lo, hi = np.percentile(sample, [1.0, 99.0])
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            lo, hi = float(finite.min()), float(finite.max())
         plane = np.clip((plane - lo) / max(hi - lo, 1e-6), 0, 1)
-    pixels = (plane * 255).astype(np.uint8)
-    image = Image.fromarray(pixels, mode="L")
+        plane = np.power(plane, 0.92).astype(np.float32)
+    else:
+        plane = np.zeros_like(plane, dtype=np.float32)
+
+    image = Image.fromarray((plane * 255).astype(np.uint8), mode="L")
+    long_side = max(image.size)
+    scale = max(1, min(4, int(np.ceil(900 / max(long_side, 1)))))
+    if scale > 1:
+        image = image.resize((image.width * scale, image.height * scale), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    image.save(buffer, format="PNG", optimize=True)
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
@@ -256,20 +269,19 @@ def preprocess_nifti(payload: bytes, filename: str) -> dict:
     new_affine[:3, :3] = canonical.affine[:3, :3] / factors
     output = nib.Nifti1Image(resized, new_affine)
     output_bytes = gzip.compress(output.to_bytes())
-    # [2026-07-28 추가, 같은 날 수정] CAM(56^3) 덮어씌울 배경용.
-    # 처음엔 리사이즈 전 원본(canonical+정규화)을 그대로 썼는데, 실제 T2 임상
-    # 스캔은 평면 해상도는 높아도 슬라이스 수가 적은 경우가 많아(예: 18~30장)
-    # 관상면/시상면이 심하게 눌려 보이는 문제가 실측으로 확인됨(사용자 스크린샷).
-    # Cloud 경량 파이프라인은 정합(registration)이 없어 "정합 후 등방(isotropic)
-    # 볼륨"을 만들 방법이 없으므로, 대신 이미 등방인 최종 56^3을 3차 스플라인으로
-    # 매끄럽게 확대(224^3)해서 씀 - 새로운 해부학 정보가 생기진 않지만, 블록처럼
-    # 보이던 리사이즈 아티팩트는 없어지고 로컬 경로(정합 후 볼륨)처럼 등방성은 유지됨.
-    smooth_factor = 4
-    overlay_arr = zoom(resized, smooth_factor, order=3).astype(np.float32)
-    overlay_affine = new_affine.copy()
-    overlay_affine[:3, :3] = new_affine[:3, :3] / smooth_factor
-    overlay = nib.Nifti1Image(overlay_arr, overlay_affine)
-    overlay_bytes = gzip.compress(overlay.to_bytes())
+
+    original_img = nib.Nifti1Image(original.astype(np.float32), canonical.affine, canonical.header.copy())
+    original_img.set_data_dtype(np.float32)
+    original_bytes = gzip.compress(original_img.to_bytes())
+
+    normalized_header = canonical.header.copy()
+    normalized_header.set_data_dtype(np.float32)
+    normalized_img = nib.Nifti1Image(normalized.astype(np.float32), canonical.affine, normalized_header)
+    normalized_img.set_data_dtype(np.float32)
+    normalized_pre_resize_bytes = gzip.compress(normalized_img.to_bytes())
+    normalized_pre_resize_name = (
+        filename.removesuffix(".gz").removesuffix(".nii") + "_minmax_pre_resize.nii.gz"
+    )
     return {
         "original_shape": tuple(int(v) for v in original.shape),
         "final_shape": TARGET_SHAPE,
@@ -277,11 +289,15 @@ def preprocess_nifti(payload: bytes, filename: str) -> dict:
         "orientation": "".join(nib.aff2axcodes(canonical.affine)),
         "original_views": [_slice_png(original, axis) for axis in (2, 1, 0)],
         "processed_views": [_slice_png(resized, axis) for axis in (2, 1, 0)],
-        "original_bytes": payload,
+        "original_bytes": original_bytes,
         "original_name": filename,
         "processed_bytes": output_bytes,
+        "normalized_pre_resize_bytes": normalized_pre_resize_bytes,
+        "normalized_pre_resize_name": normalized_pre_resize_name,
+        "cam_overlay_bytes": normalized_pre_resize_bytes,
+        "cam_reference_bytes": normalized_pre_resize_bytes,
+        "cam_inverse_transforms": [],
         "processed_name": filename.removesuffix(".gz").removesuffix(".nii") + "_preprocessed_56.nii.gz",
         "output_bytes": output_bytes,
         "output_name": filename.removesuffix(".gz").removesuffix(".nii") + "_preprocessed_56.nii.gz",
-        "cam_overlay_bytes": overlay_bytes,
     }

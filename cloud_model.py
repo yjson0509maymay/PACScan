@@ -26,10 +26,16 @@ from dataclasses import dataclass
 
 import nibabel as nib
 import numpy as np
+from nibabel.processing import resample_from_to
 import torch
 import torch.nn as nn
 from PIL import Image
 from scipy.ndimage import zoom
+
+from xai_rendering import (
+    render_cam_overlay_png,
+    restrict_cam_to_substantia_nigra,
+)
 
 HF_REPO_ID = "yjson0509maymay/braintensor-variant3"
 HF_CHECKPOINT_FILENAME = "ablation_variant3_20260726_035445_acc50.0.pt"
@@ -349,39 +355,73 @@ def _jet_like(gray: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1)
 
 
+def _display_window_mri(plane: np.ndarray) -> np.ndarray:
+    """MRI display-only robust windowing.
+
+    This changes only the PNG visualization, never the tensor used for inference.
+    Percentile windowing matches the original-MRI viewer much better than raw min/max,
+    which was being dominated by a few very bright skull/background pixels and made the
+    brain parenchyma look washed out / blurry.
+    """
+    plane = np.asarray(plane, dtype=np.float32)
+    finite = plane[np.isfinite(plane)]
+    if finite.size == 0:
+        return np.zeros_like(plane, dtype=np.float32)
+
+    # Prefer non-background voxels when enough are available. This keeps the black
+    # background black while using the useful MRI intensity range for contrast.
+    nonzero = finite[np.abs(finite) > 1e-8]
+    sample = nonzero if nonzero.size >= 128 else finite
+    lo, hi = np.percentile(sample, [1.0, 99.0])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo, hi = float(finite.min()), float(finite.max())
+    if hi <= lo:
+        return np.zeros_like(plane, dtype=np.float32)
+
+    windowed = np.clip((plane - lo) / (hi - lo), 0.0, 1.0)
+    # Very light display gamma only; no spatial sharpening/filtering is applied.
+    # Keeping spatial pixels untouched is important for a medical-image overlay.
+    return np.power(windowed, 0.92).astype(np.float32)
+
+
 def _overlay_slice_png(
-    volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.75,
+    volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.74,
     cam_floor: float = 0.0, index: int | None = None,
+    voxel_spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    class_label: str | None = None,
 ) -> str:
-    """[2026-07-28 수정] model_inference.py와 동일한 수정 - 실측 확인 결과 이 모델의
-    Grad-CAM이 뇌 전체에 넓게 반응해서(중앙값 0.35~0.4) 선형 alpha로는 뇌 전체가
-    칠해진 것처럼 보임. cam_floor(호출부에서 이 볼륨의 상위 percentile로 계산)보다
-    낮은 값은 거의 안 보이게 눌러 상대적으로 가장 강한 영역만 강조."""
-    if index is None:
-        index = volume.shape[axis] // 2
-    index = max(0, min(index, volume.shape[axis] - 1))
-    base = np.rot90(np.take(volume, index, axis=axis))
-    heat = np.rot90(np.take(cam, index, axis=axis))
-    lo, hi = float(base.min()), float(base.max())
-    base_n = (base - lo) / (hi - lo) if hi > lo else np.zeros_like(base)
-    heat_n = np.clip(heat, 0.0, 1.0)
-    if cam_floor > 0.0:
-        heat_n = np.clip((heat_n - cam_floor) / max(1e-6, 1.0 - cam_floor), 0.0, 1.0) ** 1.5
-    base_rgb = np.stack([base_n] * 3, axis=-1) * 255.0
-    heat_rgb = _jet_like(heat_n)
-    alpha = (heat_n * cam_alpha_max)[..., None]
-    composite = np.clip(base_rgb * (1 - alpha) + heat_rgb * alpha, 0, 255).astype(np.uint8)
-    image = Image.fromarray(composite, mode="RGB")
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+    return render_cam_overlay_png(
+        volume, cam, axis, index=index, voxel_spacing=voxel_spacing,
+        class_label=class_label, cam_alpha_max=cam_alpha_max, cam_floor=cam_floor,
+    )
 
 
-def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = None) -> dict:
+
+def _nifti_from_payload(payload: bytes) -> nib.Nifti1Image:
+    raw = gzip.decompress(payload) if payload[:2] == b"\x1f\x8b" else payload
+    return nib.Nifti1Image.from_bytes(raw)
+
+
+def _resample_binary_mask(mask_bytes: bytes | None, target_img: nib.Nifti1Image) -> np.ndarray | None:
+    if not mask_bytes:
+        return None
+    try:
+        mask_img = nib.as_closest_canonical(_nifti_from_payload(mask_bytes))
+        mapped = resample_from_to(mask_img, (target_img.shape, target_img.affine), order=0)
+        mask = np.asarray(mapped.dataobj, dtype=np.float32) > 0.5
+        return mask if int(mask.sum()) >= 2 else None
+    except Exception:
+        return None
+
+def run_cloud_inference(
+    nifti_bytes: bytes,
+    overlay_nifti_bytes: bytes | None = None,
+    *,
+    sn_mask_nifti_bytes: bytes | None = None,
+) -> dict:
     """model_inference.run_model_inference()와 동일한 반환 형식.
-    overlay_nifti_bytes: [2026-07-28 추가] CAM을 덮어씌울 배경(prep["cam_overlay_bytes"]) -
-    Cloud 경량 파이프라인은 정합 단계가 없어 원본과 56^3이 같은 좌표계이므로,
-    리사이즈 전(해상도 높은) 볼륨을 그대로 배경으로 써도 안전함."""
+    overlay_nifti_bytes는 Min-Max 정규화 직후, 56^3 리사이즈 전 NIfTI이다.
+    CAM을 NIfTI 물리 좌표 기준으로 이 고해상도 정규화 볼륨에 재표본화한다."""
     status = cloud_model_status()
     if not status.ready:
         raise RuntimeError(status.message)
@@ -403,21 +443,38 @@ def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = 
     cam = np.clip(zoom(cam, zoom_factors, order=1), 0.0, 1.0)
 
     display_volume, display_cam = volume, cam
+    display_img = img
+    display_spacing = tuple(float(v) for v in img.header.get_zooms()[:3])
+    display_space = "model_input_56"
     if overlay_nifti_bytes:
+        # Overlay by NIfTI physical coordinates rather than shape-only zoom. This lets the
+        # caller pass the actual DICOM-derived original volume safely in the cloud path.
         overlay_raw = gzip.decompress(overlay_nifti_bytes) if overlay_nifti_bytes[:2] == b"\x1f\x8b" else overlay_nifti_bytes
-        overlay_img = nib.Nifti1Image.from_bytes(overlay_raw)
+        overlay_img = nib.as_closest_canonical(nib.Nifti1Image.from_bytes(overlay_raw))
         overlay_volume = np.asarray(overlay_img.dataobj, dtype=np.float32)
-        if overlay_volume.shape != cam.shape:
-            overlay_zoom_factors = [s / c for s, c in zip(overlay_volume.shape, cam.shape)]
-            display_cam = np.clip(zoom(cam, overlay_zoom_factors, order=1), 0.0, 1.0)
+        overlay_volume = np.nan_to_num(overlay_volume, nan=0.0, posinf=0.0, neginf=0.0)
+        cam_img = nib.Nifti1Image(cam.astype(np.float32), img.affine, img.header.copy())
+        mapped_cam = resample_from_to(cam_img, (overlay_img.shape, overlay_img.affine), order=1)
+        display_cam = np.clip(np.asarray(mapped_cam.dataobj, dtype=np.float32), 0.0, 1.0)
         display_volume = overlay_volume
+        display_img = overlay_img
+        display_spacing = tuple(float(v) for v in overlay_img.header.get_zooms()[:3])
+        display_space = "minmax_pre_resize"
 
     pred_label = CLASS_NAMES[pred_idx]
-    cam_floor = float(np.percentile(display_cam, 80))
+    raw_display_cam = np.asarray(display_cam, dtype=np.float32)
+    supplied_sn_mask = _resample_binary_mask(sn_mask_nifti_bytes, display_img)
+    display_cam, sn_roi, focus_meta = restrict_cam_to_substantia_nigra(
+        raw_display_cam,
+        display_volume,
+        voxel_spacing=display_spacing,
+        supplied_mask=supplied_sn_mask,
+    )
+    cam_floor = 0.0
     cam_views = [
-        _overlay_slice_png(display_volume, display_cam, axis=2, cam_floor=cam_floor),
-        _overlay_slice_png(display_volume, display_cam, axis=1, cam_floor=cam_floor),
-        _overlay_slice_png(display_volume, display_cam, axis=0, cam_floor=cam_floor),
+        _overlay_slice_png(display_volume, display_cam, axis=2, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),
+        _overlay_slice_png(display_volume, display_cam, axis=1, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),
+        _overlay_slice_png(display_volume, display_cam, axis=0, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),
     ]
 
     return {
@@ -425,7 +482,7 @@ def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = 
         "prodromal": round(float(probs[1]) * 100),
         "pd": round(float(probs[2]) * 100),
         "finding": FINDING_TEMPLATES.get(pred_label, FINDING_TEMPLATES["PD"]),
-        "rationale": "흑질(Substantia Nigra) 영역을 포함한 판단 기여 영역(M3d-CAM)이 모델 예측에 크게 기여했습니다.",
+        "rationale": "흑질(Substantia Nigra) ROI 내부의 M3d-CAM 기여도를 제한적으로 시각화했습니다.",
         "pred_label": pred_label,
         "pred_label_kr": CLASS_LABEL_KR.get(pred_label, pred_label),
         "cam_views": cam_views,
@@ -435,7 +492,14 @@ def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = 
         # 탭 위치 슬라이더용. local/Cloud 어느 경로든 같은 키 이름으로 반환.
         "display_volume": display_volume,
         "display_cam": display_cam,
+        "display_cam_raw": raw_display_cam,
+        "display_roi": sn_roi,
+        "display_spacing": display_spacing,
+        "cam_focus": focus_meta,
         "cam_floor": cam_floor,
+        "display_space": display_space,
+        "projection_method": "nifti_affine_to_minmax_pre_resize" if overlay_nifti_bytes else "none",
+        "cam_render_mode": "sn_roi_restricted_spacing_v6",
         "is_ensemble": False,
     }
 
@@ -461,11 +525,9 @@ def _load_resnet_model(device: str):
 
 def _load_ensemble_artifacts():
     """[2026-07-28 추가] 4개 모델 앙상블(CNN+ResNet+CCA(동료 J)+WOA)용 CCA 변환기/
-    WOA 마스크/최종 분류기를 Hugging Face Hub에서 다운로드. cca_ridge_J 모듈이
-    아니라 이 파일(cloud_model.py) 자체에 IndependentPCARCCA 등을 이식해뒀으므로,
-    joblib이 이 모듈(cloud_model)을 참조해서 정상적으로 역직렬화 가능하려면
-    04_Feature_Engineering/build_ensemble_J_cca.py로 저장할 때와 클래스 코드가
-    동일해야 함(실제로 동일 - 위 클래스 정의 그대로 복사)."""
+    WOA 마스크/최종 분류기를 Hugging Face Hub에서 다운로드. cca_ridge_J 모듈에서
+    import한 클래스로 저장돼 있으므로(cca_ridge_J.py가 이 저장소에도 실제 파일로
+    존재), joblib이 이 모듈 경로를 그대로 참조해 정상적으로 역직렬화 가능함."""
     global _cached_ensemble_artifacts
     if _cached_ensemble_artifacts is not None:
         return _cached_ensemble_artifacts
@@ -498,11 +560,18 @@ def cloud_ensemble_status() -> CloudModelStatus:
     return CloudModelStatus(True, "4개 모델 앙상블 준비 완료(Hugging Face Hub)")
 
 
-def run_cloud_ensemble_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = None) -> dict:
+def run_cloud_ensemble_inference(
+    nifti_bytes: bytes,
+    overlay_nifti_bytes: bytes | None = None,
+    *,
+    sn_mask_nifti_bytes: bytes | None = None,
+) -> dict:
     """[2026-07-28 추가] Cloud에서도 4개 모델(CNN+ResNet+CCA(동료 J)+WOA) 앙상블을
-    쓰기 위한 추론. M3d-CAM 시각화는 run_cloud_inference()와 동일하게 CNN 자체의
-    Grad-CAM을 그대로 쓰고, 최종 확률/예측 클래스만 앙상블 분류기로 교체."""
-    cnn_result = run_cloud_inference(nifti_bytes, overlay_nifti_bytes)
+    쓰기 위한 추론. M3d-CAM(흑질 ROI 제한) 시각화는 run_cloud_inference()와 동일하게
+    CNN 자체의 CAM을 그대로 쓰고, 최종 확률/예측 클래스만 앙상블 분류기로 교체."""
+    cnn_result = run_cloud_inference(
+        nifti_bytes, overlay_nifti_bytes, sn_mask_nifti_bytes=sn_mask_nifti_bytes,
+    )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cnn_model, _ = _load_model(device)
@@ -528,6 +597,16 @@ def run_cloud_ensemble_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes 
     pred_label = CLASS_NAMES[pred_idx]
 
     result = dict(cnn_result)
+    if pred_label != cnn_result.get("pred_label"):
+        # 앙상블 최종 예측이 CNN 단독 예측과 다르면, 클래스별 색상 팔레트가 실제
+        # 표시되는 라벨과 어긋나지 않도록 같은 CAM/ROI로 다시 렌더링한다.
+        spacing = tuple(result.get("display_spacing", (1.0, 1.0, 1.0)))
+        floor = result.get("cam_floor", 0.0)
+        result["cam_views"] = [
+            _overlay_slice_png(result["display_volume"], result["display_cam"], axis=2, cam_floor=floor, voxel_spacing=spacing, class_label=pred_label),
+            _overlay_slice_png(result["display_volume"], result["display_cam"], axis=1, cam_floor=floor, voxel_spacing=spacing, class_label=pred_label),
+            _overlay_slice_png(result["display_volume"], result["display_cam"], axis=0, cam_floor=floor, voxel_spacing=spacing, class_label=pred_label),
+        ]
     result.update({
         "normal": round(float(probs[0]) * 100),
         "prodromal": round(float(probs[1]) * 100),

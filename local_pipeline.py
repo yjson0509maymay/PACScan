@@ -20,7 +20,7 @@ from typing import Callable
 from preprocessing_adapter import preprocess_nifti
 
 
-APP_VERSION = "1.6.6"
+APP_VERSION = "1.7.0"
 PIPELINE_VERSION = "ref21order_v1"
 SCRIPT_RELATIVE_PATH = Path("01_Preprocessing") / "스크립트" / "preparing_ref21order_v1.py"
 DEFAULT_SCRIPT = Path(r"E:\해커톤\BRAINTENSOR") / SCRIPT_RELATIVE_PATH
@@ -257,6 +257,34 @@ def run_local_pipeline(
 
     module = _load_pipeline(script)
     _configure_wsl_bridge(module)
+
+    # Capture the exact ANTs transforms used by the research preprocessing step.
+    # The model CAM is created in atlas/registered space; these inverse transforms
+    # are later used to project it back onto the original DICOM acquisition space.
+    # preparing_ref21order_v1.run_registration_antspy() does `import ants` INSIDE the
+    # function body, so it never appears in the module's own globals/attributes -
+    # patching module.ants (or its __globals__) is a no-op. Python caches imported
+    # modules in sys.modules, though, so importing "ants" here and patching its
+    # .registration attribute affects that same shared module object everywhere,
+    # including the function-local import inside preparing_ref21order_v1.
+    registration_capture: dict[str, list[str]] = {}
+    original_ants_registration = None
+    try:
+        import ants as ants_module
+    except ImportError:
+        ants_module = None
+    if ants_module is not None and hasattr(ants_module, "registration"):
+        original_ants_registration = ants_module.registration
+
+        def _capturing_antspy_registration(*args, **kwargs):
+            result = original_ants_registration(*args, **kwargs)
+            if isinstance(result, dict):
+                registration_capture["fwdtransforms"] = [str(path) for path in result.get("fwdtransforms", [])]
+                registration_capture["invtransforms"] = [str(path) for path in result.get("invtransforms", [])]
+            return result
+
+        ants_module.registration = _capturing_antspy_registration
+
     stage_specs = [
         ("convert_dicom_to_nifti", "dicom_to_nifti", 15, "DICOM → NIfTI 변환"),
         ("run_skull_stripping_bet", "bet", 34, "FSL BET 뇌 추출"),
@@ -289,37 +317,69 @@ def run_local_pipeline(
 
     name = f"pacscan_{run_id}"
     try:
-        info = module.preprocess_one(
-            dicom_dir=str(dicom_dir), output_dir=str(output_dir), name=name,
-            atlas_path=str(atlas), normalization="minmax", enable_bias_correction=False,
-            target_shape=(56, 56, 56), bet_frac=0.5, augment_count=0,
-            seed=42, keep_intermediate=True,
-        )
+        try:
+            info = module.preprocess_one(
+                dicom_dir=str(dicom_dir), output_dir=str(output_dir), name=name,
+                atlas_path=str(atlas), normalization="minmax", enable_bias_correction=False,
+                target_shape=(56, 56, 56), bet_frac=0.5, augment_count=0,
+                seed=42, keep_intermediate=True,
+            )
+        finally:
+            if original_ants_registration is not None and ants_module is not None:
+                ants_module.registration = original_ants_registration
+
         final_path = output_dir / f"{name}.nii.gz"
         raw_path = output_dir / "_work" / name / f"{name}_00_raw.nii.gz"
-        # [2026-07-28 추가] 정합(registration) 직후 · 최종 56^3 리사이즈 직전 볼륨.
-        # CAM(56^3, 정합 후 좌표계)을 덮어씌울 배경으로 이걸 쓴다 - "원본"(정합 전,
-        # 좌표계가 아예 다름)에 덮으면 뇌 위치가 어긋나고, 최종 56^3(블러 심함)에
-        # 덮으면 병변이 흐릿해서 사용자가 "뇌 전체가 칠해진 것 같다"고 혼란스러워함.
-        # 정합 후·리사이즈 전 볼륨은 CAM과 같은 좌표계면서 해상도는 훨씬 높음.
+        # Exact XAI background requested by the UI: Min-Max-normalized volume immediately
+        # after normalization and before the final 56x56x56 resize. Because the CAM and this
+        # volume are both in the registered/atlas coordinate system, no inverse transform is
+        # needed for visualization.
         norm_path = output_dir / "_work" / name / f"{name}_03_norm.nii.gz"
         final_bytes = final_path.read_bytes()
         raw_bytes = raw_path.read_bytes()
-        cam_overlay_bytes = norm_path.read_bytes() if norm_path.is_file() else final_bytes
+        if not norm_path.is_file():
+            raise RuntimeError(
+                "Min-Max 정규화 후·리사이즈 전 중간 산출물을 찾지 못했습니다: "
+                f"{norm_path}"
+            )
+        cam_overlay_bytes = norm_path.read_bytes()
+
+        # Persist ANTs inverse transforms because antspy may place them in temporary paths.
+        # Order is preserved exactly as returned by ants.registration()['invtransforms'].
+        inverse_transform_paths: list[str] = []
+        transform_dir = output_dir / "_cam_inverse_transforms"
+        captured_inverse = registration_capture.get("invtransforms", [])
+        if captured_inverse:
+            transform_dir.mkdir(parents=True, exist_ok=True)
+            for transform_index, source_name in enumerate(captured_inverse):
+                source_path = Path(source_name)
+                if not source_path.is_file():
+                    continue
+                suffix = "".join(source_path.suffixes) or ".tfm"
+                target_path = transform_dir / f"inverse_{transform_index:02d}{suffix}"
+                shutil.copy2(source_path, target_path)
+                inverse_transform_paths.append(str(target_path))
+
         original_display = preprocess_nifti(raw_bytes, raw_path.name)
         final_display = preprocess_nifti(final_bytes, final_path.name)
         prep = final_display
         prep.update({
             "original_views": original_display["original_views"],
             "original_shape": original_display["original_shape"],
-            "original_bytes": raw_bytes,
+            "original_bytes": original_display["original_bytes"],
             "original_name": raw_path.name,
             "processed_views": final_display["original_views"],
             "processed_bytes": final_bytes,
             "processed_name": final_path.name,
             "output_bytes": final_bytes,
             "output_name": final_path.name,
+            # XAI visualization background: Min-Max normalization output before resizing.
+            "normalized_pre_resize_bytes": cam_overlay_bytes,
+            "normalized_pre_resize_name": norm_path.name,
             "cam_overlay_bytes": cam_overlay_bytes,
+            "cam_reference_bytes": cam_overlay_bytes,
+            # Retained for audit/backward compatibility, but the v4 viewer does not use it.
+            "cam_inverse_transforms": inverse_transform_paths,
             "pipeline_mode": "local_full",
             "pipeline_version": PIPELINE_VERSION,
             "run_id": run_id,

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
+import numpy as np
 import streamlit as st
 
 from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, render_nifti_views, validate_nifti
@@ -17,6 +18,7 @@ from pdf_report import generate_xai_pdf
 
 ROOT = Path(__file__).parent
 ASSETS = ROOT / "assets"
+CAM_UI_VERSION = "minmax-sn-roi-cam-v9-legend-inset"
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -41,20 +43,65 @@ def panel(title: str, content: str, icon: str = "▣") -> None:
     st.markdown(f'<section class="panel"><div class="head"><span>{icon}</span>{title}</div><div class="pad">{content}</div></section>', unsafe_allow_html=True)
 
 
-def viewer_html(views: list[str], title: str, badge: str = "", zoom_percent: int = 100, show_legend: bool = False) -> str:
+def viewer_html(views: list[str], title: str, badge: str = "", zoom_percent: int = 100, extra_html: str = "") -> str:
     labels = ("축상면", "관상면", "시상면")
     cards = "".join(
         f'<figure><figcaption>{label}</figcaption><img src="{src}" style="transform:scale({zoom_percent / 100:.2f})"></figure>'
         for label, src in zip(labels, views)
     )
-    # [2026-07-28 추가] M3d-CAM 색상이 뭘 의미하는지(빨강=병변 가능성 높음,
-    # 파랑=낮음) 직관적으로 알 수 있게 이미지 오른쪽에 색상 범례 막대 추가.
-    legend = (
-        '<div class="cam-legend"><span class="cam-legend-label hi">병변 가능성<br>높음</span>'
-        '<div class="cam-legend-bar"></div><span class="cam-legend-label lo">낮음</span></div>'
-        if show_legend else ""
+    return f'<section class="panel"><div class="head"><span>◈</span>{title}<b class="badge">{badge}</b></div><div class="tri-view">{cards}</div>{extra_html}</section>'
+
+
+def _palette_meta(pred_label: str | None) -> dict:
+    if pred_label == "Control":
+        return {
+            "label": "정상=청색",
+            "gradient": "linear-gradient(90deg,#1e3cdc 0%,#008ce6 45%,#00c8c8 75%,#6ef0ff 100%)",
+            "note": "청색 계열 안에서 진할수록 기여 강도가 높습니다.",
+        }
+    if pred_label == "Prodromal":
+        return {
+            "label": "전구기=노랑/주황",
+            "gradient": "linear-gradient(90deg,#ffe878 0%,#ffd640 38%,#ffb026 72%,#ff8c00 100%)",
+            "note": "전구기는 노랑/주황 팔레트만 사용하며, 진할수록 기여 강도가 높습니다.",
+        }
+    return {
+        "label": "PD=주황/빨강",
+        "gradient": "linear-gradient(90deg,#ffbe46 0%,#ff9114 38%,#f05a19 72%,#dc1e1e 100%)",
+        "note": "PD는 주황/빨강 팔레트를 사용하며, 진할수록 기여 강도가 높습니다.",
+    }
+
+
+def _cam_extra_html(model_result: dict) -> str:
+    from model_inference import render_cam_insets
+
+    palette = _palette_meta(model_result.get("pred_label"))
+    insets = render_cam_insets(model_result)
+    left_hint = "hotspot 표시" if insets.get("left_has_signal") else "활성 신호 없음"
+    right_hint = "hotspot 표시" if insets.get("right_has_signal") else "활성 신호 없음"
+    return (
+        '<div style="border-top:1px solid #21374f;padding:12px 14px 4px;background:#061220;">'
+        '<div style="display:grid;grid-template-columns:minmax(280px,1.1fr) minmax(340px,1fr);gap:14px;align-items:start;">'
+        '<div style="border:1px solid #18324d;border-radius:8px;padding:10px 12px;background:#07172a;">'
+        f'<div style="font-size:12px;font-weight:700;color:#dcecff;margin-bottom:8px;">색상 범례 · {palette["label"]}</div>'
+        f'<div style="height:14px;border-radius:999px;border:1px solid #284766;background:{palette["gradient"]};"></div>'
+        '<div style="display:flex;justify-content:space-between;font-size:10px;color:#9ab0c4;margin-top:6px;">'
+        '<span>낮은 기여도</span><span>높은 기여도</span></div>'
+        f'<div style="font-size:10px;line-height:1.6;color:#b8c7d8;margin-top:8px;">{palette["note"]}<br>색상은 병변 분할이 아니라 <b>모델 판단 기여도</b>를 의미합니다.</div>'
+        '</div>'
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">'
+        '<figure style="margin:0;border:1px solid #18324d;border-radius:8px;overflow:hidden;background:#07172a;">'
+        f'<figcaption style="padding:8px 10px;font-size:11px;font-weight:700;color:#eaf5ff;border-bottom:1px solid #18324d;">좌측 흑질 확대 inset <span style="opacity:.75;font-weight:500;">({left_hint})</span></figcaption>'
+        f'<img src="{insets["left_src"]}" style="display:block;width:100%;height:220px;object-fit:contain;background:#01070e;">'
+        '</figure>'
+        '<figure style="margin:0;border:1px solid #18324d;border-radius:8px;overflow:hidden;background:#07172a;">'
+        f'<figcaption style="padding:8px 10px;font-size:11px;font-weight:700;color:#eaf5ff;border-bottom:1px solid #18324d;">우측 흑질 확대 inset <span style="opacity:.75;font-weight:500;">({right_hint})</span></figcaption>'
+        f'<img src="{insets["right_src"]}" style="display:block;width:100%;height:220px;object-fit:contain;background:#01070e;">'
+        '</figure>'
+        '</div>'
+        '</div>'
+        '</div>'
     )
-    return f'<section class="panel"><div class="head"><span>◈</span>{title}<b class="badge">{badge}</b></div><div class="tri-view-wrap"><div class="tri-view">{cards}</div>{legend}</div></section>'
 
 
 def relative_slice_index(size: int, position_percent: int) -> int:
@@ -118,49 +165,137 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
     return viewer_html(views, title, badge, zoom_percent)
 
 
-def reset_cam_view() -> None:
-    for label in ("축상면", "관상면", "시상면"):
-        st.session_state[f"cam_{label}_position"] = 50
+def _cam_peak_indices(cam: np.ndarray) -> tuple[int, int, int]:
+    """Return the most informative axial/coronal/sagittal CAM slice indexes.
+
+    The old viewer always opened at 50% for every plane. When the activation was
+    concentrated in inferior slices, the axial center slice legitimately contained no
+    heatmap even though the coronal and sagittal views did. We score every slice by the
+    mean of its strongest 10% CAM voxels and open each plane at its own peak slice.
+    """
+    cam = np.nan_to_num(np.asarray(cam, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if cam.size == 0 or float(cam.max()) <= 1e-8:
+        shape = cam.shape if cam.ndim == 3 else (1, 1, 1)
+        return (shape[2] // 2, shape[1] // 2, shape[0] // 2)
+
+    indexes: list[int] = []
+    for axis in (2, 1, 0):
+        scores: list[float] = []
+        for index in range(cam.shape[axis]):
+            plane = np.take(cam, index, axis=axis).reshape(-1)
+            if plane.size == 0 or float(plane.max()) <= 1e-8:
+                scores.append(0.0)
+                continue
+            cutoff = float(np.percentile(plane, 90.0))
+            strongest = plane[plane >= cutoff]
+            scores.append(float(strongest.mean()) if strongest.size else float(plane.max()))
+        indexes.append(int(np.argmax(scores)) if scores else cam.shape[axis] // 2)
+    return tuple(indexes)
+
+
+def _cam_peak_positions(model_result: dict) -> tuple[int, int, int]:
+    shape = tuple(int(v) for v in model_result["display_volume"].shape)
+    indexes = _cam_peak_indices(model_result["display_cam"])
+    sizes = (shape[2], shape[1], shape[0])
+    return tuple(
+        round(index * 100 / max(size - 1, 1))
+        for index, size in zip(indexes, sizes)
+    )
+
+
+def reset_cam_view(peak_positions: tuple[int, int, int] = (50, 50, 50)) -> None:
+    for label, position in zip(("축상면", "관상면", "시상면"), peak_positions):
+        st.session_state[f"cam_{label}_position"] = int(position)
     st.session_state["cam_zoom"] = 100
 
 
 def interactive_cam_viewer(model_result: dict) -> str:
-    """[2026-07-28 추가] "위치 조절" 없이 가운데 슬라이스 3장만 고정으로 보여주던
-    AI 분석 탭에도 원본 MRI/전처리 결과 탭과 동일한 위치·확대 슬라이더를 붙임 -
-    interactive_mri_viewer()와 같은 패턴이지만, NIfTI 파일을 다시 읽는 대신
-    model_inference.render_cam_overlay()로 이미 메모리에 있는 CAM 배열을 재슬라이싱함
-    (모델을 다시 돌리지 않아 빠름)."""
+    """Interactive original-DICOM CAM viewer.
+
+    Each plane initially opens at the slice with the strongest CAM evidence instead of
+    forcing all planes to 50%. This prevents an empty axial overlay when the model response
+    is located above or below the volume center.
+    """
     from model_inference import render_cam_overlay
 
-    shape = model_result["display_volume"].shape
+    shape = tuple(int(v) for v in model_result["display_volume"].shape)
     labels = ("축상면", "관상면", "시상면")
     axes = (2, 1, 0)
     sizes = (shape[2], shape[1], shape[0])
+    peak_positions = _cam_peak_positions(model_result)
+    peak_indices = [relative_slice_index(size, position) for size, position in zip(sizes, peak_positions)]
+
+    # Reinitialize only when a new CAM is loaded. Otherwise user-selected slider positions
+    # are preserved while switching tabs.
+    cam_array = np.asarray(model_result["display_cam"])
+    fingerprint = (
+        str(model_result.get("checkpoint", "")),
+        shape,
+        int(np.argmax(cam_array)) if cam_array.size else -1,
+        round(float(cam_array.max()) if cam_array.size else 0.0, 6),
+    )
+    if st.session_state.get("cam_view_fingerprint") != fingerprint:
+        st.session_state["cam_view_fingerprint"] = fingerprint
+        reset_cam_view(peak_positions)
+
+    st.markdown(
+        f'<div class="viewer-guide"><b>AI 양측 흑질 ROI 기여도 시각화</b> '
+        f'<span style="opacity:.72">({CAM_UI_VERSION})</span><br>'
+        'AI 추론은 전체 56³ MRI로 수행하지만, 화면의 색상 CAM은 <b>양측 흑질 ROI 내부로만 제한</b>합니다. '
+        '해부학적 흑질 마스크 파일이 있으면 해당 마스크를 사용하고, 없으면 정규화 영상에서 계산한 '
+        '<b>보수적인 추정 중뇌 ROI</b>를 사용합니다. 관상면·시상면은 voxel spacing을 반영해 펼쳐 표시합니다. '
+        '<b>색상은 병변 분할이 아니라 ROI 내부의 모델 판단 기여도입니다.</b></div>',
+        unsafe_allow_html=True,
+    )
+    focus = model_result.get("cam_focus", {})
+    if focus.get("estimated", True):
+        st.info(
+            "현재 정확한 흑질 atlas mask가 없어 추정 양측 흑질 ROI를 사용합니다. "
+            "정확한 마스크를 사용하려면 PACSCAN_SN_MASK 환경변수에 동일 좌표계의 NIfTI 마스크 경로를 지정하세요."
+        )
+    if not focus.get("meaningful_activation", True):
+        st.warning(
+            "이 검사에서는 흑질 ROI 안의 CAM 활성도가 전체 CAM 대비 충분히 높지 않아 색상을 표시하지 않았습니다. "
+            "약한 신호를 임의로 빨간색 병변처럼 확대하지 않도록 한 안전장치입니다."
+        )
+
     control_columns = st.columns(3, gap="small")
     positions = []
-    for column, label, size in zip(control_columns, labels, sizes):
+    for column, label, size, peak_position in zip(control_columns, labels, sizes, peak_positions):
+        key = f"cam_{label}_position"
+        if key not in st.session_state:
+            st.session_state[key] = int(peak_position)
         with column:
             positions.append(
                 st.slider(
                     f"{label} 연동 위치 (%)",
                     min_value=0,
                     max_value=100,
-                    value=50,
-                    key=f"cam_{label}_position",
+                    key=key,
+                    help=f"AI 최대 활성 슬라이스: {peak_position}%",
                 )
             )
+
     zoom_column, reset_column = st.columns([4, 1], gap="small")
     with zoom_column:
+        if "cam_zoom" not in st.session_state:
+            st.session_state["cam_zoom"] = 100
         zoom_percent = st.slider(
             "영상 확대·축소 (%)",
             min_value=50,
             max_value=250,
-            value=100,
             step=10,
             key="cam_zoom",
         )
     with reset_column:
-        st.button("↺ 보기 초기화", key="reset_cam_view", on_click=reset_cam_view)
+        st.button(
+            "◎ AI 최대 위치",
+            key="reset_cam_view",
+            on_click=reset_cam_view,
+            args=(peak_positions,),
+            help="세 면을 각각 CAM 활성도가 가장 높은 정규화 후·리사이즈 전 슬라이스로 이동합니다.",
+        )
+
     indices = [relative_slice_index(size, position) for size, position in zip(sizes, positions)]
     views = [
         render_cam_overlay(model_result, axis, index)
@@ -170,7 +305,34 @@ def interactive_cam_viewer(model_result: dict) -> str:
         f"{label} {index + 1}/{size} ({position}%)"
         for label, index, size, position in zip(labels, indices, sizes, positions)
     )
-    return viewer_html(views, "AI 병변 시각화", f"M3d-CAM · {position_badge} · 확대 {zoom_percent}%", zoom_percent, show_legend=True)
+    peak_badge = " · ".join(
+        f"{label} 최고 {index + 1}/{size}"
+        for label, index, size in zip(labels, peak_indices, sizes)
+    )
+    display_space = model_result.get("display_space", "model_input_56")
+    space_label = (
+        "Min-Max 후·리사이즈 전"
+        if display_space == "minmax_pre_resize"
+        else "56³ 모델 입력"
+    )
+    focus = model_result.get("cam_focus", {})
+    spacing = tuple(float(v) for v in model_result.get("display_spacing", (1.0, 1.0, 1.0)))
+    roi_label = focus.get("roi_label", "흑질 ROI")
+    palette_label = {"Control": "정상=청색", "Prodromal": "전구기=노랑/주황", "PD": "PD=주황/빨강"}.get(model_result.get("pred_label"), "클래스별 팔레트")
+    focus_badge = (
+        f"{roi_label} · {focus.get('sides_visible_label', '표시 없음')} · {palette_label} · ROI 내 색상 {focus.get('roi_cam_coverage_percent', 0):g}% · "
+        f"좌 {focus.get('left_roi_coverage_percent', 0):g}% / 우 {focus.get('right_roi_coverage_percent', 0):g}% · "
+        f"연결영역 {focus.get('component_count', 0)}개 · "
+        f"ROI peak/global {focus.get('roi_peak_ratio', 0):.2f}"
+    )
+    spacing_badge = f"spacing {spacing[0]:.2f}×{spacing[1]:.2f}×{spacing[2]:.2f}mm 보정"
+    return viewer_html(
+        views,
+        "AI 양측 흑질 ROI 기여도 시각화",
+        f"{space_label} + M3d-CAM · {focus_badge} · {spacing_badge} · {position_badge} · {peak_badge} · 확대 {zoom_percent}%",
+        zoom_percent,
+        extra_html=_cam_extra_html(model_result),
+    )
 
 
 def xai_report(
@@ -204,7 +366,7 @@ def xai_report(
         status_class = "model-connected"
         status_text = "모델 연결됨 · 실제 추론 결과"
         status_note = "연구 재현 프로토타입으로, 논문 목표 정확도(93.41%)에 아직 못 미칩니다. 임상 진단 결과가 아닙니다."
-        heatmap_caption = "AI 분석 결과 (M3d-CAM 히트맵)"
+        heatmap_caption = "Min-Max 정규화 후·리사이즈 전 영상 위 흑질 ROI 내부 M3d-CAM (클래스별 색상 팔레트)"
         narrative_label = "핵심 판독 요약 <small>(예측 클래스 기반 템플릿 문구)</small>"
     else:
         model_label = "3D-CNN + 3D-ResNet"
@@ -223,8 +385,7 @@ def xai_report(
         <div><b>현재 상태</b><span class="{status_class}">{status_text}<small>{status_note}</small></span></div>
       </div>
       <aside>AI 보조 시스템: ParkinsLens / PACScan v{APP_VERSION}</aside></article></div>
-      <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>{heatmap_caption}</figcaption><img src="{heatmap}"></figure>
-      <div class="cam-legend-light"><span class="hi">병변 가능성<br>높음</span><div class="cam-legend-bar"></div><span class="lo">낮음</span></div></div></article>
+      <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>{heatmap_caption}</figcaption><img src="{heatmap}"></figure></div></article>
       <article><h3>▤ AI 진단 확률 요약</h3>{report_bar('정상', result.normal, '#1556c0')}{report_bar('전구기', result.prodromal, '#ff8c00')}{report_bar('파킨슨병 의심', result.pd, '#e91d2b')}</article>
       <article class="narrative"><strong>AI</strong><div><h3>{narrative_label}</h3><ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되었습니다.</li><li>임상 증상 및 추가 검사와 종합하여 전문의가 최종 판단해야 합니다.</li></ul></div></article>
       <footer>▣ 생성일시　{generated_at} <span>담당 전문의 서명　________________</span></footer></main></section>'''
@@ -445,9 +606,9 @@ st.markdown('''<style>
 .panel{background:linear-gradient(145deg,#0c1c30,#071424);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.15)}.head{min-height:44px;padding:10px 14px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--line);font-size:15px;font-weight:700}.head>span{color:var(--blue)}.head .badge{margin-left:auto;padding:4px 7px;border:1px solid #1d6bb7;border-radius:30px;color:#58b0ff;font-size:9px}.pad{padding:13px}.side-item{height:45px;display:flex;align-items:center;padding:0 12px;margin:4px 0;border-radius:5px;font-size:13px;font-weight:650}.side-item.active{background:linear-gradient(90deg,#174bad,#2064d8)}.side-gap{height:70px}.hint{font-size:10px;color:var(--muted);line-height:1.6;margin:7px 2px}
 .stepper{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}.step{padding:10px;border:1px solid #1c3551;border-radius:7px;background:#071528;color:#71869e;font-size:11px;text-align:center}.step.done{border-color:#1775c9;color:#78bdff;background:#09213d}.step.active{border-color:#2b99ff;color:#fff;box-shadow:0 0 0 1px #2b99ff inset}.empty{min-height:520px;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:#71859c}.empty b{color:#c5d5e6;font-size:17px;margin:12px}.empty .brain{font-size:55px;filter:grayscale(1);opacity:.6}
 .validation{padding:14px;border-left:4px solid #2bdbac;background:#08201f;border-radius:5px;color:#c8eee5;font-size:11px;line-height:1.8}.validation.error{border-color:#ff4150;background:#281018;color:#ffd2d6}.file-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:11px}.file-grid div{padding:9px;background:#071426;border:1px solid #1a3049;border-radius:5px}.file-grid small{display:block;color:#768ba3;font-size:9px}.file-grid b{font-size:11px}
-.tri-view{display:grid;grid-template-columns:minmax(0,2.45fr) minmax(190px,1fr);grid-template-rows:1fr 1fr;min-height:500px;background:#01070e}.tri-view figure{margin:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}.tri-view figure:first-child{grid-row:1/3;border-right:1px solid #21374f}.tri-view figure:nth-child(2){border-bottom:1px solid #21374f}.tri-view figcaption{position:absolute;top:9px;left:10px;background:#061426cc;padding:4px 7px;border-radius:3px;font-size:10px;z-index:2}.tri-view img{width:100%;height:100%;max-height:540px;object-fit:contain;transform-origin:center center;transition:transform .18s ease}.tri-view figure:nth-child(n+2) img{max-height:250px}.tri-view-wrap{display:flex;gap:10px;align-items:stretch}.tri-view-wrap .tri-view{flex:1;min-width:0}.cam-legend{flex:0 0 42px;display:flex;flex-direction:column;align-items:center;padding:10px 2px;background:#061426;border-radius:6px}.cam-legend-bar{width:14px;flex:1;border-radius:7px;margin:8px 0;background:linear-gradient(to top,#1e3cdc 0%,#00c8c8 33%,#ffdc00 66%,#dc1e1e 100%)}.cam-legend-label{font-size:9px;text-align:center;line-height:1.3}.cam-legend-label.hi{color:#ff6b6b}.cam-legend-label.lo{color:#5ec8ff}.qc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.qc{padding:11px;border:1px solid #1c3853;background:#071729;border-radius:6px}.qc small{display:block;color:#7f95ad;font-size:9px}.qc b{font-size:12px}.qc.ok b{color:#3bd6ae}.demo{padding:8px 12px;background:#3b2a08;border:1px solid #8a6718;border-radius:5px;color:#ffd76a;font-size:10px;margin-bottom:9px}
+.tri-view{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(260px,1fr);grid-template-rows:1fr 1fr;min-height:500px;background:#01070e}.tri-view figure{margin:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}.tri-view figure:first-child{grid-row:1/3;border-right:1px solid #21374f}.tri-view figure:nth-child(2){border-bottom:1px solid #21374f}.tri-view figcaption{position:absolute;top:9px;left:10px;background:#061426cc;padding:4px 7px;border-radius:3px;font-size:10px;z-index:2}.tri-view img{width:100%;height:100%;max-height:540px;object-fit:contain;image-rendering:auto;transform-origin:center center;transition:transform .18s ease}.tri-view figure:nth-child(n+2) img{max-height:250px}.qc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.qc{padding:11px;border:1px solid #1c3853;background:#071729;border-radius:6px}.qc small{display:block;color:#7f95ad;font-size:9px}.qc b{font-size:12px}.qc.ok b{color:#3bd6ae}.demo{padding:8px 12px;background:#3b2a08;border:1px solid #8a6718;border-radius:5px;color:#ffd76a;font-size:10px;margin-bottom:9px}
 .prob{margin:10px 0}.prob>div{display:flex;justify-content:space-between;font-size:10px;margin-bottom:5px}.prob i,.rbar i{display:block;height:6px;background:#1c2c40;border-radius:20px;overflow:hidden}.prob em,.rbar em{display:block;height:100%;border-radius:20px}.reason{padding:10px;border:1px solid #263d57;border-radius:5px;color:#b8c7d8;font-size:10px;line-height:1.65}.finding{padding:13px;background:#061426;font-size:14px;line-height:1.6}.warning{padding:12px;background:#2a1017;border-top:1px solid #66232e;color:#ffd3d7;font-size:11px}.warning b{color:#ffe000}
-.report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:150px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:125px;height:125px;max-height:none;object-fit:contain;border-radius:10px;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.model-connected{color:#1f6f4f}.compare{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:stretch}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.cam-legend-light{flex:0 0 44px;width:44px;display:flex;flex-direction:column;align-items:center;padding:8px 2px;border:1px solid #c6d5e5;border-radius:6px;background:#f6f8fb}.cam-legend-light .cam-legend-bar{width:14px;flex:1;border-radius:7px;margin:8px 0;background:linear-gradient(to top,#1e3cdc 0%,#00c8c8 33%,#ffdc00 66%,#dc1e1e 100%)}.cam-legend-light .hi,.cam-legend-light .lo{font-size:9px;text-align:center;line-height:1.3;font-weight:600}.cam-legend-light .hi{color:#c0293f}.cam-legend-light .lo{color:#1c6fbf}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
+.report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:150px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:125px;height:125px;max-height:none;object-fit:contain;border-radius:10px;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.model-connected{color:#1f6f4f}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
 [data-testid="stFileUploader"]{width:100%;min-width:0;background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important;overflow:hidden}[data-testid="stFileUploader"] section{width:100%;min-width:0;padding:7px 5px!important;background:#071729!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:7px!important}[data-testid="stFileUploader"] *{color:#dcecff!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stFileUploader"] button{width:100%!important;min-width:0!important;max-width:100%!important;margin:0!important;padding:8px 3px!important;background:#12345b!important;border:1px solid #357abb!important;color:#fff!important;overflow:hidden!important}[data-testid="stFileUploader"] button p{width:100%;font-size:0!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stFileUploader"] button p::after{content:"DICOM 폴더 선택";font-size:10px!important;line-height:1.35;color:#fff!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploader"] span:has(+small),[data-testid="stFileUploaderDropzoneInstructions"] small,[data-testid="stFileUploader"] [data-testid="stFileUploaderFileErrorMessage"]{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"]{width:100%;min-width:0;text-align:center}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}.stButton button,.stDownloadButton button{width:100%;padding-left:6px!important;padding-right:6px!important;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important;font-size:11px!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
 .st-key-reset_mri_view{display:flex;justify-content:flex-end;align-items:flex-end;width:100%}.st-key-reset_mri_view button{width:84px!important;height:84px!important;min-width:84px!important;min-height:84px!important;padding:8px!important;border-radius:10px!important}.st-key-reset_mri_view button p{line-height:1.45!important;text-align:center!important}
 .topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{display:block;padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526;color:#edf5ff;text-decoration:none;transition:border-color .15s ease,background .15s ease,transform .15s ease}.patient-card:hover{border-color:#278fff;background:#0b223d;transform:translateY(-1px)}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.history-link{display:inline-block;margin:2px 5px 2px 0;padding:5px 7px;border:1px solid #2389e8;border-radius:5px;background:#0b3158;color:#8dccff!important;text-decoration:none;white-space:nowrap;font-size:10px;font-weight:700}.history-link:hover{background:#124b82;color:#fff!important}.history-link.report-link{border-color:#7563df;background:#28225a;color:#c5bcff!important}.history-link.report-link:hover{background:#3c3480;color:#fff!important}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
@@ -613,7 +774,12 @@ with center:
                 # Cloud) 순으로 자동 처리. model_result의 is_ensemble 플래그로 실제
                 # 뭐가 돌았는지 화면에 정확히 표시(실제로 안 돈 걸 "4개 모델 결과"라고
                 # 속여 표시하지 않기 위함).
-                model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
+                model_result = run_model_inference(
+                    prep["output_bytes"],
+                    ROOT,
+                    overlay_nifti_bytes=prep.get("normalized_pre_resize_bytes")
+                    or prep.get("cam_overlay_bytes"),
+                )
                 model_connected = True
                 st.session_state.model_inference_error = None
             except Exception as exc:
@@ -694,8 +860,16 @@ with center:
                     f'</div></section>',
                     unsafe_allow_html=True,
                 )
-                st.markdown('<div class="viewer-guide">슬라이더로 축상면/관상면/시상면 위치와 확대 배율을 조절할 수 있습니다. 이미지 오른쪽 막대는 M3d-CAM 색상이 나타내는 병변 가능성 정도입니다(빨강에 가까울수록 높음).</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="viewer-guide">AI 추론은 최종 전처리된 56×56×56 영상으로 수행하고, '
+                    '색상 CAM은 Min-Max 정규화가 끝난 직후이면서 리사이즈하기 전의 고해상도 영상에 맞춘 뒤, 흑질 ROI 내부만 표시합니다. '
+                    '슬라이더로 축상면/관상면/시상면 위치와 확대 배율을 조절할 수 있습니다.</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown('<div class="viewer-guide"><b>시각화 단계:</b> DICOM→NIfTI → 뇌 추출/정합(로컬 전체 전처리) → <b>Min-Max 정규화</b> → CAM 좌표 정렬 → <b>흑질 ROI 밖 제거</b> → 색상 시각화</div>', unsafe_allow_html=True)
                 st.markdown(interactive_cam_viewer(model_result), unsafe_allow_html=True)
+                if model_result.get("projection_warning"):
+                    st.warning(model_result["projection_warning"])
                 st.markdown(
                     f'<section class="panel"><div class="head"><span>▤</span>파킨스렌즈(AI) 판독 소견</div>'
                     f'<div class="finding">{result.finding}</div>'
@@ -712,7 +886,7 @@ with center:
                     with st.expander("⚠ 실제 모델 연결 실패 - 왜 데모로 표시되는지 보기"):
                         st.code(inference_error)
                 demo_views = [data_url(ASSETS / "sample_t2_mri.png"), data_url(ASSETS / "coronal_result.png"), data_url(ASSETS / "sagittal_result.png")]
-                st.markdown(viewer_html(demo_views, "AI 병변 시각화", "M3d-CAM 시연용", show_legend=True), unsafe_allow_html=True)
+                st.markdown(viewer_html(demo_views, "AI 병변 시각화 · 시연용", "Min-Max 전처리 기반 아님 · M3d-CAM 시연용"), unsafe_allow_html=True)
                 st.markdown(f'<section class="panel"><div class="head"><span>▤</span>파킨스렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
         else:
             original_src = prep["original_views"][0]

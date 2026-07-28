@@ -19,12 +19,20 @@ import importlib.util
 import io
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+from nibabel.processing import resample_from_to
 from PIL import Image
+
+from xai_rendering import (
+    render_bilateral_cam_insets_png,
+    render_cam_overlay_png,
+    restrict_cam_to_substantia_nigra,
+)
 
 from local_pipeline import _discover_braintensor_script
 
@@ -116,13 +124,7 @@ def _load_feature_extraction_module(braintensor_root: Path):
 
 def extract_ensemble_features(nifti_bytes: bytes, app_root: Path | None = None) -> dict:
     """[2026-07-28 추가] CNN(Variant3)+ResNet 특징(FV-3/FV-4)을 신규 환자 1명의
-    업로드 볼륨에서 추출 - CCA/WOA 앙상블 추론의 1단계. 아직 CCA 변환기·WOA
-    선택마스크·최종 분류기가 파일로 저장돼 있지 않아(04_Feature_Engineering/
-    run_real_pipeline.py가 원래 일괄평가용이라 이들을 저장 안 함) 이 함수는
-    fv3/fv4까지만 반환한다 - CCA/WOA 학습이 끝나고 그 산출물을 저장하는 후속
-    작업이 끝나야 실제 앙상블 예측(run_ensemble_inference 같은 함수)을 완성할 수
-    있다. 지금은 검증된 특징추출 단계 하나만 독립적으로 완결된 상태.
-    """
+    업로드 볼륨에서 추출 - CCA/WOA 앙상블 추론의 1단계."""
     global _feature_models
     root = _braintensor_root(app_root)
     fe = _load_feature_extraction_module(root)
@@ -176,11 +178,13 @@ def ensemble_status(app_root: Path | None = None) -> ModelInferenceStatus:
     return ModelInferenceStatus(ready, str(fe_dir), message)
 
 
-def run_ensemble_inference(nifti_bytes: bytes, app_root: Path | None = None) -> dict:
+def run_ensemble_inference(
+    nifti_bytes: bytes, app_root: Path | None = None, overlay_nifti_bytes: bytes | None = None,
+) -> dict:
     """[2026-07-28 추가] 4개 모델(CNN Variant3=우리, ResNet=우리, CCA=동료 J,
     WOA=우리) 앙상블 최종 추론. 확률/예측 클래스는 이 앙상블 분류기 결과를 쓰고,
-    M3d-CAM 시각화는 CNN(Variant3) 자체의 Grad-CAM을 그대로 사용(앙상블 분류기
-    자체는 CCA로 융합된 저차원 특징을 보는 거라 원본 볼륨 공간에 대응되는
+    M3d-CAM 시각화는 CNN(Variant3) 자체의 흑질 ROI 제한 CAM을 그대로 사용(앙상블
+    분류기 자체는 CCA로 융합된 저차원 특징을 보는 거라 원본 볼륨 공간에 대응되는
     "이 복셀이 중요하다"는 시각화가 없음 - 표준적인 관행대로 시각적 설명은
     CNN 쪽에서, 최종 판단은 앙상블에서 가져오는 구조).
 
@@ -195,7 +199,7 @@ def run_ensemble_inference(nifti_bytes: bytes, app_root: Path | None = None) -> 
     local_status = model_inference_status(app_root)
     if not local_status.ready:
         raise RuntimeError(f"로컬 CNN 모델이 준비되지 않았습니다: {local_status.message}")
-    cnn_result = _run_local_inference(nifti_bytes, local_status, app_root)
+    cnn_result = _run_local_inference(nifti_bytes, local_status, app_root, overlay_nifti_bytes)
 
     features = extract_ensemble_features(nifti_bytes, app_root)
     fv3, fv4 = features["fv3"].reshape(1, -1), features["fv4"].reshape(1, -1)
@@ -205,6 +209,16 @@ def run_ensemble_inference(nifti_bytes: bytes, app_root: Path | None = None) -> 
     pred_label = CLASS_NAMES_ENSEMBLE[pred_idx]
 
     result = dict(cnn_result)  # cam_views/display_volume 등 시각화 관련 필드는 CNN 결과 그대로 재사용
+    if pred_label != cnn_result.get("pred_label"):
+        # 앙상블 최종 예측이 CNN 단독 예측과 다르면, 클래스별 색상 팔레트가 실제
+        # 표시되는 라벨과 어긋나지 않도록 같은 CAM/ROI로 다시 렌더링한다.
+        spacing = tuple(result.get("display_spacing", (1.0, 1.0, 1.0)))
+        floor = result.get("cam_floor", 0.0)
+        result["cam_views"] = [
+            _overlay_slice_png(result["display_volume"], result["display_cam"], axis=2, cam_floor=floor, voxel_spacing=spacing, class_label=pred_label),
+            _overlay_slice_png(result["display_volume"], result["display_cam"], axis=1, cam_floor=floor, voxel_spacing=spacing, class_label=pred_label),
+            _overlay_slice_png(result["display_volume"], result["display_cam"], axis=0, cam_floor=floor, voxel_spacing=spacing, class_label=pred_label),
+        ]
     result.update({
         "normal": round(float(probs[0]) * 100),
         "prodromal": round(float(probs[1]) * 100),
@@ -254,75 +268,275 @@ def _jet_like(gray: np.ndarray) -> np.ndarray:
     return np.stack([r, g, b], axis=-1)
 
 
-def _overlay_slice_png(
-    volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.75,
-    cam_floor: float = 0.0, index: int | None = None,
-) -> str:
-    """[2026-07-28 수정] 실측 확인 결과, 이 모델(Variant3, 212개 샘플로만 학습)의
-    Grad-CAM은 흑질처럼 좁은 부위가 아니라 뇌 전체에 걸쳐 넓게 반응함(중앙값 0.35~0.4,
-    상위 25%가 0.5 이상) - 이걸 그대로 선형(alpha=heat*0.6)으로 칠하면 뇌 전체가
-    칠해진 것처럼 보여 사용자가 혼란스러워함. cam_floor(호출부에서 그 볼륨의 상위
-    percentile로 계산해 넘김)보다 낮은 값은 거의 안 보이게 눌러서, 상대적으로 가장
-    강하게 반응한 영역만 도드라지게 함 - 신호 자체를 바꾸는 게 아니라 "상대적으로
-    어디가 더 강한지"를 시각적으로 알아보기 쉽게 강조하는 것뿐(percentile 임계값은
-    이 볼륨 자체의 분포에서 계산 - 절대적인 "이 부위가 흑질이다" 판정이 아님)."""
-    if index is None:
-        index = volume.shape[axis] // 2
-    index = max(0, min(index, volume.shape[axis] - 1))
-    base = np.rot90(np.take(volume, index, axis=axis))
-    heat = np.rot90(np.take(cam, index, axis=axis))
-    lo, hi = float(base.min()), float(base.max())
-    base_n = (base - lo) / (hi - lo) if hi > lo else np.zeros_like(base)
-    heat_n = np.clip(heat, 0.0, 1.0)
-    if cam_floor > 0.0:
-        heat_n = np.clip((heat_n - cam_floor) / max(1e-6, 1.0 - cam_floor), 0.0, 1.0) ** 1.5
-    base_rgb = np.stack([base_n] * 3, axis=-1) * 255.0
-    heat_rgb = _jet_like(heat_n)
-    alpha = (heat_n * cam_alpha_max)[..., None]
-    composite = np.clip(base_rgb * (1 - alpha) + heat_rgb * alpha, 0, 255).astype(np.uint8)
-    image = Image.fromarray(composite, mode="RGB")
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+def _display_window_mri(plane: np.ndarray) -> np.ndarray:
+    """MRI display-only robust windowing.
 
-
-def run_model_inference(
-    nifti_bytes: bytes, app_root: Path | None = None, overlay_nifti_bytes: bytes | None = None,
-) -> dict:
-    """nifti_bytes: gzip 압축된 56^3 NIfTI(PACScan prep["output_bytes"]).
-    overlay_nifti_bytes: [2026-07-28 추가] CAM을 덮어씌울 배경 볼륨(PACScan
-    prep["cam_overlay_bytes"]) - CAM과 같은 좌표계이면서 56^3보다 해상도가 높은
-    볼륨(정합 후·최종 리사이즈 전). 안 넘기면 기존처럼 56^3 볼륨 자체에 덮음
-    (해상도가 낮아 병변이 흐릿하게/뭉개져 보임 - 하위호환용 폴백).
-
-    반환 dict: normal/prodromal/pd(0~100 정수), finding/rationale(str),
-    pred_label(str), cam_views(축상/관상/시상 3장, data URL), checkpoint(str),
-    test_accuracy(체크포인트 저장 당시 test accuracy, float|None).
-
-    [2026-07-27 추가] 로컬(옆 폴더 BRAINTENSOR 체크아웃)이 없으면 - 예: 실제
-    Streamlit Community Cloud 배포 환경 - cloud_model.py(Hugging Face Hub에서
-    체크포인트를 내려받는 자체완결 버전)로 자동 폴백함. app.py는 이 함수 하나만
-    부르면 되고 로컬/Cloud 구분을 신경 쓸 필요 없음.
+    This changes only the PNG visualization, never the tensor used for inference.
+    Percentile windowing matches the original-MRI viewer much better than raw min/max,
+    which was being dominated by a few very bright skull/background pixels and made the
+    brain parenchyma look washed out / blurry.
     """
-    # [2026-07-28 추가] 4개 모델(CNN+ResNet+CCA(동료 J)+WOA) 앙상블이 준비돼 있으면
-    # 우선 사용 - 로컬/Cloud 둘 다 시도. app.py는 이 함수 하나만 부르면 되고
-    # 앙상블/단독, 로컬/Cloud 어느 조합인지 신경 쓸 필요 없음(is_ensemble 플래그로
-    # 실제 뭐가 돌았는지만 결과에서 확인).
-    local_status = model_inference_status(app_root)
-    if local_status.ready:
-        if ensemble_status(app_root).ready:
-            return run_ensemble_inference(nifti_bytes, app_root)
-        return _run_local_inference(nifti_bytes, local_status, app_root, overlay_nifti_bytes)
+    plane = np.asarray(plane, dtype=np.float32)
+    finite = plane[np.isfinite(plane)]
+    if finite.size == 0:
+        return np.zeros_like(plane, dtype=np.float32)
 
-    from cloud_model import cloud_model_status, cloud_ensemble_status, run_cloud_inference, run_cloud_ensemble_inference
+    # Prefer non-background voxels when enough are available. This keeps the black
+    # background black while using the useful MRI intensity range for contrast.
+    nonzero = finite[np.abs(finite) > 1e-8]
+    sample = nonzero if nonzero.size >= 128 else finite
+    lo, hi = np.percentile(sample, [1.0, 99.0])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo, hi = float(finite.min()), float(finite.max())
+    if hi <= lo:
+        return np.zeros_like(plane, dtype=np.float32)
 
-    cloud_status = cloud_model_status()
-    if cloud_status.ready:
-        if cloud_ensemble_status().ready:
-            return run_cloud_ensemble_inference(nifti_bytes, overlay_nifti_bytes)
-        return run_cloud_inference(nifti_bytes, overlay_nifti_bytes)
+    windowed = np.clip((plane - lo) / (hi - lo), 0.0, 1.0)
+    # Very light display gamma only; no spatial sharpening/filtering is applied.
+    # Keeping spatial pixels untouched is important for a medical-image overlay.
+    return np.power(windowed, 0.92).astype(np.float32)
 
-    raise RuntimeError(f"로컬 모델({local_status.message}) / Cloud 모델({cloud_status.message}) 둘 다 사용 불가")
+
+def _overlay_slice_png(
+    volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.74,
+    cam_floor: float = 0.0, index: int | None = None,
+    voxel_spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    class_label: str | None = None,
+) -> str:
+    return render_cam_overlay_png(
+        volume, cam, axis, index=index, voxel_spacing=voxel_spacing,
+        class_label=class_label, cam_alpha_max=cam_alpha_max, cam_floor=cam_floor,
+    )
+
+
+def _nifti_from_payload(payload: bytes) -> nib.Nifti1Image:
+    """Read .nii/.nii.gz bytes without relying on a filename."""
+    raw = gzip.decompress(payload) if payload[:2] == b"\x1f\x8b" else payload
+    return nib.Nifti1Image.from_bytes(raw)
+
+
+def _canonical_volume(payload: bytes) -> tuple[nib.Nifti1Image, np.ndarray]:
+    img = nib.as_closest_canonical(_nifti_from_payload(payload))
+    volume = np.asarray(img.dataobj, dtype=np.float32)
+    volume = np.nan_to_num(volume, nan=0.0, posinf=0.0, neginf=0.0)
+    return img, volume
+
+
+def _resample_cam_by_affine(
+    cam: np.ndarray,
+    source_nifti_bytes: bytes,
+    target_img: nib.Nifti1Image,
+) -> np.ndarray:
+    """Project model-space CAM to another NIfTI grid using physical coordinates."""
+    source_img = _nifti_from_payload(source_nifti_bytes)
+    cam_img = nib.Nifti1Image(np.asarray(cam, dtype=np.float32), source_img.affine, source_img.header.copy())
+    mapped = resample_from_to(cam_img, (target_img.shape, target_img.affine), order=1)
+    return np.clip(np.asarray(mapped.dataobj, dtype=np.float32), 0.0, 1.0)
+
+
+
+def _discover_sn_mask_bytes(app_root: Path | None = None) -> tuple[bytes | None, str]:
+    """Load an optional SN mask NIfTI for visualization.
+
+    Priority: PACSCAN_SN_MASK environment variable, then assets/substantia_nigra_mask.nii.gz
+    or assets/pd25_substantia_nigra_mask.nii.gz. The mask must be in the same physical
+    coordinate system as the Min-Max pre-resize volume; otherwise omit it and use the
+    clearly labelled estimated midbrain ROI fallback.
+    """
+    candidates: list[Path] = []
+    configured = os.environ.get("PACSCAN_SN_MASK")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    root = (app_root or Path(__file__).resolve().parent).resolve()
+    candidates.extend([
+        root / "assets" / "substantia_nigra_mask.nii.gz",
+        root / "assets" / "pd25_substantia_nigra_mask.nii.gz",
+        root / "assets" / "substantia_nigra_mask.nii",
+    ])
+    for path in candidates:
+        if path.is_file():
+            return path.read_bytes(), str(path)
+    return None, ""
+
+
+def _resample_binary_mask(mask_bytes: bytes | None, target_img: nib.Nifti1Image) -> np.ndarray | None:
+    if not mask_bytes:
+        return None
+    try:
+        mask_img = nib.as_closest_canonical(_nifti_from_payload(mask_bytes))
+        mapped = resample_from_to(mask_img, (target_img.shape, target_img.affine), order=0)
+        mask = np.asarray(mapped.dataobj, dtype=np.float32) > 0.5
+        if int(mask.sum()) < 2:
+            return None
+        return mask
+    except Exception:
+        return None
+
+def _apply_antspy_inverse_transforms(
+    cam: np.ndarray,
+    source_nifti_bytes: bytes,
+    original_img: nib.Nifti1Image,
+    inverse_transform_paths: list[str],
+) -> np.ndarray:
+    """Map atlas/preprocessed CAM back to the original DICOM-derived NIfTI space."""
+    import ants
+
+    source_img = _nifti_from_payload(source_nifti_bytes)
+    cam_img = nib.Nifti1Image(np.asarray(cam, dtype=np.float32), source_img.affine, source_img.header.copy())
+    with tempfile.TemporaryDirectory(prefix="pacscan_cam_inverse_") as temp_dir:
+        temp = Path(temp_dir)
+        fixed_path = temp / "original_canonical.nii.gz"
+        cam_path = temp / "cam_model_space.nii.gz"
+        nib.save(original_img, str(fixed_path))
+        nib.save(cam_img, str(cam_path))
+        fixed = ants.image_read(str(fixed_path))
+        moving_cam = ants.image_read(str(cam_path))
+        mapped = ants.apply_transforms(
+            fixed=fixed,
+            moving=moving_cam,
+            transformlist=[str(Path(path)) for path in inverse_transform_paths],
+            interpolator="linear",
+        )
+        mapped_arr = np.asarray(mapped.numpy(), dtype=np.float32)
+    if mapped_arr.shape != original_img.shape:
+        raise RuntimeError(
+            f"역정합 CAM shape 불일치: mapped={mapped_arr.shape}, original={original_img.shape}"
+        )
+    mapped_arr = np.clip(mapped_arr, 0.0, 1.0)
+    if not np.isfinite(mapped_arr).any() or float(mapped_arr.max()) <= 1e-7:
+        raise RuntimeError("역정합 후 CAM이 비어 있습니다.")
+    return mapped_arr
+
+
+def _register_reference_back_to_original(
+    cam: np.ndarray,
+    source_nifti_bytes: bytes,
+    reference_nifti_bytes: bytes,
+    original_img: nib.Nifti1Image,
+) -> np.ndarray:
+    """Fallback for local full preprocessing when saved inverse transforms are unavailable.
+
+    The reference volume is the registration-space, pre-resize image. We first resample the
+    56^3 CAM to that grid and then estimate an affine reference->original transform with ANTs.
+    """
+    import ants
+
+    reference_img = _nifti_from_payload(reference_nifti_bytes)
+    cam_reference = _resample_cam_by_affine(cam, source_nifti_bytes, reference_img)
+    cam_reference_img = nib.Nifti1Image(
+        cam_reference.astype(np.float32), reference_img.affine, reference_img.header.copy()
+    )
+    with tempfile.TemporaryDirectory(prefix="pacscan_cam_reregister_") as temp_dir:
+        temp = Path(temp_dir)
+        fixed_path = temp / "original_canonical.nii.gz"
+        moving_path = temp / "registration_reference.nii.gz"
+        cam_path = temp / "cam_reference.nii.gz"
+        nib.save(original_img, str(fixed_path))
+        nib.save(reference_img, str(moving_path))
+        nib.save(cam_reference_img, str(cam_path))
+        fixed = ants.image_read(str(fixed_path))
+        moving = ants.image_read(str(moving_path))
+        moving_cam = ants.image_read(str(cam_path))
+        try:
+            reg = ants.registration(
+                fixed=fixed,
+                moving=moving,
+                type_of_transform="AffineFast",
+                random_seed=42,
+                verbose=False,
+            )
+        except Exception:
+            reg = ants.registration(
+                fixed=fixed,
+                moving=moving,
+                type_of_transform="Affine",
+                random_seed=42,
+                verbose=False,
+            )
+        mapped = ants.apply_transforms(
+            fixed=fixed,
+            moving=moving_cam,
+            transformlist=reg["fwdtransforms"],
+            interpolator="linear",
+        )
+        mapped_arr = np.asarray(mapped.numpy(), dtype=np.float32)
+    mapped_arr = np.clip(mapped_arr, 0.0, 1.0)
+    if mapped_arr.shape != original_img.shape or float(mapped_arr.max()) <= 1e-7:
+        raise RuntimeError("원본 공간 재정합 CAM 생성에 실패했습니다.")
+    return mapped_arr
+
+
+def _attach_original_dicom_overlay(
+    model_result: dict,
+    source_nifti_bytes: bytes,
+    original_nifti_bytes: bytes | None,
+    inverse_transform_paths: list[str] | None = None,
+    reference_nifti_bytes: bytes | None = None,
+) -> dict:
+    """Replace the visualization background with the original DICOM-derived volume.
+
+    Prediction still uses the preprocessed 56^3 input. Only the visualization is projected
+    back to the original acquisition space.
+    """
+    if not original_nifti_bytes:
+        return model_result
+
+    original_img, original_volume = _canonical_volume(original_nifti_bytes)
+    model_cam = np.asarray(model_result.get("display_cam_raw", model_result["display_cam"]), dtype=np.float32)
+    projection_method = "nifti_affine"
+    projection_warning = ""
+
+    if inverse_transform_paths:
+        try:
+            original_cam = _apply_antspy_inverse_transforms(
+                model_cam, source_nifti_bytes, original_img, inverse_transform_paths
+            )
+            projection_method = "antspy_saved_inverse"
+        except Exception as exc:
+            projection_warning = f"저장된 ANTs 역변환 적용 실패: {exc}"
+            if reference_nifti_bytes:
+                original_cam = _register_reference_back_to_original(
+                    model_cam, source_nifti_bytes, reference_nifti_bytes, original_img
+                )
+                projection_method = "antspy_reregister_fallback"
+            else:
+                raise
+    elif reference_nifti_bytes:
+        # Local full preprocessing changed the coordinate system, so affine-only resize is unsafe.
+        original_cam = _register_reference_back_to_original(
+            model_cam, source_nifti_bytes, reference_nifti_bytes, original_img
+        )
+        projection_method = "antspy_reregister"
+    else:
+        # Cloud lightweight preprocessing only canonicalizes/resizes; physical coordinates are preserved.
+        original_cam = _resample_cam_by_affine(model_cam, source_nifti_bytes, original_img)
+
+    display_spacing = tuple(float(v) for v in original_img.header.get_zooms()[:3])
+    focused_cam, sn_roi, focus_meta = restrict_cam_to_substantia_nigra(
+        original_cam, original_volume, voxel_spacing=display_spacing
+    )
+    cam_floor = 0.0
+    pred_label = model_result.get("pred_label")
+    cam_views = [
+        _overlay_slice_png(original_volume, focused_cam, axis=2, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),
+        _overlay_slice_png(original_volume, focused_cam, axis=1, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),
+        _overlay_slice_png(original_volume, focused_cam, axis=0, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),
+    ]
+    model_result.update(
+        display_volume=original_volume,
+        display_cam=focused_cam,
+        display_cam_raw=original_cam,
+        display_roi=sn_roi,
+        display_spacing=display_spacing,
+        cam_focus=focus_meta,
+        cam_floor=cam_floor,
+        cam_views=cam_views,
+        display_space="original_dicom",
+        projection_method=projection_method,
+        projection_warning=projection_warning,
+        cam_render_mode="sn_roi_restricted_spacing_v6",
+    )
+    return model_result
 
 
 def _run_local_inference(
@@ -350,28 +564,47 @@ def _run_local_inference(
     cam = prediction["cam"]
     pred_label = prediction["pred_label"]
 
-    # [2026-07-28 추가] overlay_nifti_bytes가 있으면 56^3보다 해상도 높은(정합 후·
-    # 리사이즈 전) 볼륨에 병변을 덮는다 - CAM(56^3)을 그 볼륨 크기로 다시 확대.
+    # XAI background is the Min-Max-normalized volume immediately before resize.
+    # Resample CAM by NIfTI physical coordinates, not only by array shape, so the 56^3 CAM
+    # stays aligned with the higher-resolution pre-resize volume.
     display_volume = volume
     display_cam = cam
+    display_img = img
+    display_spacing = tuple(float(v) for v in img.header.get_zooms()[:3])
+    display_space = "model_input_56"
     if overlay_nifti_bytes:
         overlay_raw = gzip.decompress(overlay_nifti_bytes) if overlay_nifti_bytes[:2] == b"\x1f\x8b" else overlay_nifti_bytes
-        overlay_img = nib.Nifti1Image.from_bytes(overlay_raw)
+        overlay_img = nib.as_closest_canonical(nib.Nifti1Image.from_bytes(overlay_raw))
         overlay_volume = np.asarray(overlay_img.dataobj, dtype=np.float32)
-        if overlay_volume.shape != cam.shape:
-            zoom_factors = [s / c for s, c in zip(overlay_volume.shape, cam.shape)]
-            display_cam = np.clip(_zoom(cam, zoom_factors, order=1), 0.0, 1.0)
+        overlay_volume = np.nan_to_num(overlay_volume, nan=0.0, posinf=0.0, neginf=0.0)
+
+        cam_img = nib.Nifti1Image(cam.astype(np.float32), img.affine, img.header.copy())
+        mapped_cam = resample_from_to(cam_img, (overlay_img.shape, overlay_img.affine), order=1)
+        display_cam = np.clip(np.asarray(mapped_cam.dataobj, dtype=np.float32), 0.0, 1.0)
         display_volume = overlay_volume
+        display_img = overlay_img
+        display_spacing = tuple(float(v) for v in overlay_img.header.get_zooms()[:3])
+        display_space = "minmax_pre_resize"
 
     # [2026-07-28 추가] 이 볼륨 CAM의 상위 활성값만 강조 - 실측 확인 결과 이 모델의
     # CAM은 중앙값이 0.35~0.4로 뇌 전체에 넓게 반응해서, 그대로 칠하면 뇌 전체가
     # 물든 것처럼 보여 사용자가 혼란스러워함(스크린샷으로 확인/피드백 받음). 상위
     # 80퍼센타일을 기준으로 그 아래는 거의 안 보이게 눌러 상대적 강조 영역만 도드라지게 함.
-    cam_floor = float(np.percentile(display_cam, 80))
+    raw_display_cam = np.asarray(display_cam, dtype=np.float32)
+    sn_mask_bytes, sn_mask_path = _discover_sn_mask_bytes(app_root)
+    supplied_sn_mask = _resample_binary_mask(sn_mask_bytes, display_img)
+    display_cam, sn_roi, focus_meta = restrict_cam_to_substantia_nigra(
+        raw_display_cam,
+        display_volume,
+        voxel_spacing=display_spacing,
+        supplied_mask=supplied_sn_mask,
+    )
+    focus_meta["mask_path"] = sn_mask_path if supplied_sn_mask is not None else ""
+    cam_floor = 0.0
     cam_views = [
-        _overlay_slice_png(display_volume, display_cam, axis=2, cam_floor=cam_floor),  # 축상(axial)
-        _overlay_slice_png(display_volume, display_cam, axis=1, cam_floor=cam_floor),  # 관상(coronal)
-        _overlay_slice_png(display_volume, display_cam, axis=0, cam_floor=cam_floor),  # 시상(sagittal)
+        _overlay_slice_png(display_volume, display_cam, axis=2, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),  # 축상(axial)
+        _overlay_slice_png(display_volume, display_cam, axis=1, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),  # 관상(coronal)
+        _overlay_slice_png(display_volume, display_cam, axis=0, cam_floor=cam_floor, voxel_spacing=display_spacing, class_label=pred_label),  # 시상(sagittal)
     ]
 
     return {
@@ -379,7 +612,7 @@ def _run_local_inference(
         "prodromal": round(probs["Prodromal"] * 100),
         "pd": round(probs["PD"] * 100),
         "finding": FINDING_TEMPLATES.get(pred_label, FINDING_TEMPLATES["PD"]),
-        "rationale": "흑질(Substantia Nigra) 영역을 포함한 판단 기여 영역(M3d-CAM)이 모델 예측에 크게 기여했습니다.",
+        "rationale": "흑질(Substantia Nigra) ROI 내부의 M3d-CAM 기여도를 제한적으로 시각화했습니다.",
         "pred_label": pred_label,
         "pred_label_kr": CLASS_LABEL_KR.get(pred_label, pred_label),
         "cam_views": cam_views,
@@ -389,9 +622,105 @@ def _run_local_inference(
         # 배열도 함께 반환 - render_cam_overlay()가 이걸로 다른 슬라이스를 다시 그림.
         "display_volume": display_volume,
         "display_cam": display_cam,
+        "display_cam_raw": raw_display_cam,
+        "display_roi": sn_roi,
+        "display_spacing": display_spacing,
+        "cam_focus": focus_meta,
         "cam_floor": cam_floor,
+        "display_space": display_space,
+        "projection_method": "nifti_affine_to_minmax_pre_resize" if overlay_nifti_bytes else "none",
+        "cam_render_mode": "sn_roi_restricted_spacing_v6",
+        "is_ensemble": False,
     }
 
+
+def run_model_inference(
+    nifti_bytes: bytes,
+    app_root: Path | None = None,
+    overlay_nifti_bytes: bytes | None = None,
+    *,
+    original_nifti_bytes: bytes | None = None,
+    inverse_transform_paths: list[str] | None = None,
+    reference_nifti_bytes: bytes | None = None,
+) -> dict:
+    """Run the trained model (or the 4-model ensemble, when its artifacts are
+    available) and render CAM on the requested visualization volume.
+
+    nifti_bytes:
+        Preprocessed 56^3 model input.
+    original_nifti_bytes:
+        DICOM->NIfTI volume before BET/registration/normalization/resizing. When provided,
+        CAM is projected back to this acquisition space for visualization.
+    inverse_transform_paths:
+        ANTs inverse transforms captured during the local full preprocessing registration.
+    reference_nifti_bytes:
+        Registration-space, pre-resize volume used only as a local fallback when exact saved
+        inverse transforms are unavailable.
+    overlay_nifti_bytes:
+        Preferred visualization background: Min-Max-normalized NIfTI immediately before
+        the final 56x56x56 resize. CAM is resampled into this volume's physical space.
+
+    [2026-07-28 추가] 로컬/Cloud 모두 4개 모델(CNN+ResNet+CCA(동료 J)+WOA) 앙상블
+    아티팩트가 준비돼 있으면 그걸 우선 사용한다 - app.py는 이 함수 하나만 부르면
+    되고 앙상블/단독, 로컬/Cloud 어느 조합인지 신경 쓸 필요 없음(is_ensemble
+    플래그로 실제 뭐가 돌았는지만 결과에서 확인).
+    """
+    local_status = model_inference_status(app_root)
+    if local_status.ready:
+        use_ensemble = ensemble_status(app_root).ready
+        if use_ensemble:
+            result = run_ensemble_inference(nifti_bytes, app_root, overlay_nifti_bytes=None)
+        else:
+            result = _run_local_inference(nifti_bytes, local_status, app_root, overlay_nifti_bytes=None)
+        if original_nifti_bytes:
+            return _attach_original_dicom_overlay(
+                result,
+                nifti_bytes,
+                original_nifti_bytes,
+                inverse_transform_paths=inverse_transform_paths,
+                reference_nifti_bytes=reference_nifti_bytes,
+            )
+        if overlay_nifti_bytes:
+            if use_ensemble:
+                return run_ensemble_inference(nifti_bytes, app_root, overlay_nifti_bytes=overlay_nifti_bytes)
+            return _run_local_inference(nifti_bytes, local_status, app_root, overlay_nifti_bytes)
+        return result
+
+    from cloud_model import cloud_model_status, cloud_ensemble_status, run_cloud_inference, run_cloud_ensemble_inference
+
+    cloud_status = cloud_model_status()
+    if cloud_status.ready:
+        sn_mask_bytes, _sn_mask_path = _discover_sn_mask_bytes(app_root)
+        use_cloud_ensemble = cloud_ensemble_status().ready
+        if use_cloud_ensemble:
+            result = run_cloud_ensemble_inference(nifti_bytes, None, sn_mask_nifti_bytes=sn_mask_bytes)
+        else:
+            result = run_cloud_inference(nifti_bytes, None, sn_mask_nifti_bytes=sn_mask_bytes)
+        if original_nifti_bytes:
+            return _attach_original_dicom_overlay(
+                result,
+                nifti_bytes,
+                original_nifti_bytes,
+                inverse_transform_paths=None,
+                reference_nifti_bytes=None,
+            )
+        if overlay_nifti_bytes:
+            if use_cloud_ensemble:
+                return run_cloud_ensemble_inference(nifti_bytes, overlay_nifti_bytes, sn_mask_nifti_bytes=sn_mask_bytes)
+            return run_cloud_inference(nifti_bytes, overlay_nifti_bytes, sn_mask_nifti_bytes=sn_mask_bytes)
+        return result
+
+    raise RuntimeError(f"로컬 모델({local_status.message}) / Cloud 모델({cloud_status.message}) 둘 다 사용 불가")
+
+
+
+def render_cam_insets(model_result: dict) -> dict:
+    """Return left/right substantia nigra inset images for the current model_result."""
+    return render_bilateral_cam_insets_png(
+        np.asarray(model_result["display_volume"], dtype=np.float32),
+        np.asarray(model_result["display_cam"], dtype=np.float32),
+        class_label=model_result.get("pred_label"),
+    )
 
 def render_cam_overlay(model_result: dict, axis: int, index: int) -> str:
     """[2026-07-28 추가] AI 분석 탭의 위치 슬라이더용 - run_model_inference()가
@@ -400,5 +729,7 @@ def render_cam_overlay(model_result: dict, axis: int, index: int) -> str:
     처리 가능 - 렌더링 로직 자체는 두 경로가 동일해서 cloud_model을 따로 부를 필요 없음."""
     return _overlay_slice_png(
         model_result["display_volume"], model_result["display_cam"], axis,
-        cam_floor=model_result["cam_floor"], index=index,
+        cam_floor=model_result.get("cam_floor", 0.0), index=index,
+        voxel_spacing=tuple(model_result.get("display_spacing", (1.0, 1.0, 1.0))),
+        class_label=model_result.get("pred_label"),
     )

@@ -1,0 +1,26 @@
+PACScan 흑질 ROI 시각화 설정 (v6)
+===================================
+
+1. 기본 동작
+- AI 분류 입력: 기존과 동일한 56x56x56 전체 MRI
+- 색상 시각화 배경: Min-Max 정규화 후, 최종 리사이즈 전 NIfTI
+- 색상 표시 범위: 양측 흑질 ROI 내부로 제한
+- 정확한 흑질 마스크가 없으면 '추정 양측 흑질 ROI'를 사용하며 UI에 명시됨
+
+2. 정확한 흑질 atlas mask 사용
+다음 중 한 방법으로 NIfTI 이진 마스크를 지정하세요.
+
+A) PowerShell 환경변수
+$env:PACSCAN_SN_MASK="D:\Brain_Tensor\masks\pd25_substantia_nigra_mask.nii.gz"
+python -m streamlit run app.py
+
+B) PACScan assets 폴더에 배치
+D:\Brain_Tensor\PACScan\assets\substantia_nigra_mask.nii.gz
+또는
+D:\Brain_Tensor\PACScan\assets\pd25_substantia_nigra_mask.nii.gz
+
+3. 주의
+- 마스크는 AI 시각화 배경인 Min-Max 정규화 후·리사이즈 전 영상과 같은 물리 좌표계여야 합니다.
+- 로컬 전체 전처리가 PD25 공간으로 정합된다면 PD25 공간의 흑질 마스크를 사용하세요.
+- Cloud 경량 전처리는 atlas 정합이 없으므로 atlas mask를 그대로 쓰면 위치가 맞지 않을 수 있습니다.
+- 색상은 병변 분할이 아니라, 흑질 ROI 안에서의 모델 판단 기여도입니다.

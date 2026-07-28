@@ -75,44 +75,6 @@ class ProbabilityBar(Flowable):
         canvas.drawRightString(self.width, 5.2 * mm, f"{self.value}%")
 
 
-class ColorLegend(Flowable):
-    """[2026-07-28 추가] M3d-CAM 색상이 뭘 의미하는지(빨강=병변 가능성 높음,
-    파랑=낮음) PDF에서도 알 수 있게 - app.py 화면판의 cam-legend와 동일한
-    그라디언트(_jet_like 컬러맵)를 reportlab 캔버스에 직접 그림."""
-
-    _STOPS = [(0.0, (30, 60, 220)), (0.33, (0, 200, 200)), (0.66, (255, 220, 0)), (1.0, (220, 30, 30))]
-
-    def __init__(self, width: float = 14 * mm, height: float = 67 * mm):
-        super().__init__()
-        self.width = width
-        self.height = height
-
-    def _color_at(self, t: float) -> tuple[float, float, float]:
-        for (t0, c0), (t1, c1) in zip(self._STOPS, self._STOPS[1:]):
-            if t0 <= t <= t1:
-                frac = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
-                return tuple((c0[i] + (c1[i] - c0[i]) * frac) / 255 for i in range(3))
-        return tuple(c / 255 for c in self._STOPS[-1][1])
-
-    def draw(self) -> None:
-        canvas = self.canv
-        bar_w = self.width * 0.5
-        x = (self.width - bar_w) / 2
-        bar_bottom, bar_h = 9 * mm, self.height - 20 * mm
-        steps = 40
-        seg_h = bar_h / steps
-        for i in range(steps):
-            r, g, b = self._color_at(i / (steps - 1))
-            canvas.setFillColorRGB(r, g, b)
-            canvas.rect(x, bar_bottom + i * seg_h, bar_w, seg_h + 0.4, fill=1, stroke=0)
-        canvas.setFont(FONT_NAME, 6.5)
-        canvas.setFillColor(colors.HexColor("#c0293f"))
-        canvas.drawCentredString(self.width / 2, bar_bottom + bar_h + 9, "병변")
-        canvas.drawCentredString(self.width / 2, bar_bottom + bar_h + 2, "가능성 높음")
-        canvas.setFillColor(colors.HexColor("#1c6fbf"))
-        canvas.drawCentredString(self.width / 2, bar_bottom - 7, "낮음")
-
-
 def generate_xai_pdf(
     *,
     result,
@@ -279,14 +241,15 @@ def generate_xai_pdf(
         height=67 * mm,
         kind="proportional",
     )
-    heatmap_caption = "AI 분석 결과 (M3d-CAM 히트맵)" if model_connected else "AI 분석 결과 (시연용 히트맵)"
-    legend = ColorLegend()
+    heatmap_caption = (
+        "Min-Max 정규화 후·리사이즈 전 영상 위 흑질 ROI 내부 M3d-CAM" if model_connected else "AI 분석 결과 (시연용 히트맵)"
+    )
     image_table = Table(
         [
-            [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph(f"<b>{heatmap_caption}</b>", center), ""],
-            [original, heatmap, legend],
+            [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph(f"<b>{heatmap_caption}</b>", center)],
+            [original, heatmap],
         ],
-        colWidths=[78 * mm, 78 * mm, 20 * mm],
+        colWidths=[88 * mm, 88 * mm],
     )
     image_table.setStyle(
         TableStyle(
