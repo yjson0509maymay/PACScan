@@ -204,13 +204,6 @@ def xai_report(
         status_class = "model-connected"
         status_text = "모델 연결됨 · 실제 추론 결과"
         status_note = "연구 재현 프로토타입으로, 논문 목표 정확도(93.41%)에 아직 못 미칩니다. 임상 진단 결과가 아닙니다."
-        if not full_pipeline:
-            # [2026-07-29 추가] Cloud 경량 전처리는 FSL(BET)이 설치 불가능한 환경이라
-            # 두개골 제거를 아예 적용하지 못함(HD-BET 등 대체 시도했으나 의존성이
-            # 너무 무거워 보류 - 구현 대신 한계로 명시하기로 결정). 모델은 두개골
-            # 제거된 이미지로 학습돼서, 이 경우 입력이 학습 분포와 달라 정확도가
-            # 로컬보다 낮을 수 있음.
-            status_note += " 또한 Cloud 환경에서는 두개골 제거(BET)가 적용되지 않아, 모델이 학습 때 본 것과 다른 형태의 입력을 받습니다 - 로컬 실행 대비 정확도가 낮아질 수 있습니다."
         heatmap_caption = "AI 분석 결과 (M3d-CAM 히트맵)"
         narrative_label = "핵심 판독 요약 <small>(예측 클래스 기반 템플릿 문구)</small>"
     else:
@@ -685,11 +678,6 @@ with center:
                         "다만 이 프로젝트의 논문 재현 정확도가 아직 논문 목표치(93.41%)에 크게 못 미치는 "
                         "연구 프로토타입이라, 실제 진단 결과로 사용할 수 없습니다."
                     )
-                if prep.get("pipeline_mode") != "local_full":
-                    # [2026-07-29 추가] Cloud 경량 전처리는 FSL(BET) 설치가 안 돼 두개골
-                    # 제거를 못 함(HD-BET 등 대체 시도했으나 의존성이 너무 무거워 보류) -
-                    # 모델은 두개골 제거된 이미지로 학습돼서 입력 분포가 달라짐을 명시.
-                    banner_text += " 또한 Cloud 환경은 두개골 제거(BET)가 적용되지 않아 학습 때와 다른 형태의 입력이 들어갑니다 - 로컬 실행보다 정확도가 낮아질 수 있습니다."
                 st.markdown(
                     f'<div class="demo" style="background:#e6f2ee;color:#1f4f3d;border-color:#2f6f5e">{banner_text}</div>',
                     unsafe_allow_html=True,
