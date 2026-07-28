@@ -75,6 +75,44 @@ class ProbabilityBar(Flowable):
         canvas.drawRightString(self.width, 5.2 * mm, f"{self.value}%")
 
 
+class ColorLegend(Flowable):
+    """[2026-07-28 추가] M3d-CAM 색상이 뭘 의미하는지(빨강=병변 가능성 높음,
+    파랑=낮음) PDF에서도 알 수 있게 - app.py 화면판의 cam-legend와 동일한
+    그라디언트(_jet_like 컬러맵)를 reportlab 캔버스에 직접 그림."""
+
+    _STOPS = [(0.0, (30, 60, 220)), (0.33, (0, 200, 200)), (0.66, (255, 220, 0)), (1.0, (220, 30, 30))]
+
+    def __init__(self, width: float = 14 * mm, height: float = 67 * mm):
+        super().__init__()
+        self.width = width
+        self.height = height
+
+    def _color_at(self, t: float) -> tuple[float, float, float]:
+        for (t0, c0), (t1, c1) in zip(self._STOPS, self._STOPS[1:]):
+            if t0 <= t <= t1:
+                frac = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+                return tuple((c0[i] + (c1[i] - c0[i]) * frac) / 255 for i in range(3))
+        return tuple(c / 255 for c in self._STOPS[-1][1])
+
+    def draw(self) -> None:
+        canvas = self.canv
+        bar_w = self.width * 0.5
+        x = (self.width - bar_w) / 2
+        bar_bottom, bar_h = 9 * mm, self.height - 20 * mm
+        steps = 40
+        seg_h = bar_h / steps
+        for i in range(steps):
+            r, g, b = self._color_at(i / (steps - 1))
+            canvas.setFillColorRGB(r, g, b)
+            canvas.rect(x, bar_bottom + i * seg_h, bar_w, seg_h + 0.4, fill=1, stroke=0)
+        canvas.setFont(FONT_NAME, 6.5)
+        canvas.setFillColor(colors.HexColor("#c0293f"))
+        canvas.drawCentredString(self.width / 2, bar_bottom + bar_h + 9, "병변")
+        canvas.drawCentredString(self.width / 2, bar_bottom + bar_h + 2, "가능성 높음")
+        canvas.setFillColor(colors.HexColor("#1c6fbf"))
+        canvas.drawCentredString(self.width / 2, bar_bottom - 7, "낮음")
+
+
 def generate_xai_pdf(
     *,
     result,
@@ -88,6 +126,7 @@ def generate_xai_pdf(
     assets_dir: Path,
     heatmap_src: str | None = None,
     model_connected: bool = False,
+    is_ensemble: bool = False,
 ) -> bytes:
     _register_font(assets_dir / "fonts" / "NotoSansKR-VF.ttf")
     output = io.BytesIO()
@@ -176,7 +215,16 @@ def generate_xai_pdf(
     )
     full_pipeline = prep.get("pipeline_mode") == "local_full"
     pipeline_name = "BRAINTENSOR ref21order_v1" if full_pipeline else "PACScan 배포용 전처리"
-    if model_connected:
+    if model_connected and is_ensemble:
+        summary_text = (
+            "본 보고서는 전처리 결과와 4개 모델 앙상블(3D-CNN Variant3 + 3D-ResNet + CCA(동료 J 구현) + WOA)의 "
+            "추론 결과를 바탕으로 자동 생성되었습니다. WOA 특징선택 적용 후 정확도가 CCA 단독보다 낮아진 것으로 "
+            "실측 확인됐고, 논문 재현 목표 정확도(93.41%)에도 아직 못 미치는 연구 프로토타입으로, "
+            "최종 판독과 진단은 담당 전문의의 임상적 판단을 우선합니다."
+        )
+        model_line = "<b>모델</b>　3D-CNN(Variant3) + 3D-ResNet + CCA(동료 J) + WOA + M3d-CAM"
+        status_line = "<b>현재 상태</b>　모델 연결됨 · 4개 모델 앙상블 추론 결과"
+    elif model_connected:
         summary_text = (
             "본 보고서는 전처리 결과와 실제 학습된 모델(Variant3)의 추론 결과를 바탕으로 자동 생성되었습니다. "
             "논문 재현 목표 정확도(93.41%)에 아직 못 미치는 연구 프로토타입으로, "
@@ -232,12 +280,13 @@ def generate_xai_pdf(
         kind="proportional",
     )
     heatmap_caption = "AI 분석 결과 (M3d-CAM 히트맵)" if model_connected else "AI 분석 결과 (시연용 히트맵)"
+    legend = ColorLegend()
     image_table = Table(
         [
-            [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph(f"<b>{heatmap_caption}</b>", center)],
-            [original, heatmap],
+            [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph(f"<b>{heatmap_caption}</b>", center), ""],
+            [original, heatmap, legend],
         ],
-        colWidths=[88 * mm, 88 * mm],
+        colWidths=[78 * mm, 78 * mm, 20 * mm],
     )
     image_table.setStyle(
         TableStyle(

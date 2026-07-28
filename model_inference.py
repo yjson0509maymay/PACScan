@@ -37,6 +37,7 @@ class ModelInferenceStatus:
 
 
 CLASS_LABEL_KR = {"Control": "정상", "Prodromal": "전구기", "PD": "파킨슨병 의심"}
+CLASS_NAMES_ENSEMBLE = ["Control", "Prodromal", "PD"]
 
 # [논문 미기재, PACScan 자체 결정] 예측 클래스별 판독 문구 템플릿 - 실제 LLM/RAG
 # 서술이 아니라 예측 클래스에 매핑된 고정 문구. 확률·클래스는 실제 모델 출력이고
@@ -137,6 +138,84 @@ def extract_ensemble_features(nifti_bytes: bytes, app_root: Path | None = None) 
 
     fv3, fv4 = fe.extract_single(cnn, resnet, volume, device=fe.device)
     return {"fv3": fv3, "fv4": fv4}
+
+
+_ensemble_artifacts = None
+
+
+def _load_ensemble_artifacts(braintensor_root: Path):
+    """[2026-07-28 추가] 4개 모델(CNN=우리/ResNet=우리/CCA=동료 J/WOA=우리) 앙상블용
+    저장된 아티팩트 로드 - 04_Feature_Engineering/build_ensemble_J_cca.py가 만든
+    cca_transformer(J의 IndependentPCARCCA)/woa_mask/final_classifier 3종.
+    cca_ridge_J 모듈이 sys.path에 있어야 joblib이 IndependentPCARCCA를 역직렬화
+    가능(피클은 클래스를 모듈 경로로 참조함)."""
+    global _ensemble_artifacts
+    if _ensemble_artifacts is not None:
+        return _ensemble_artifacts
+    import joblib
+
+    fe_dir = braintensor_root / "04_Feature_Engineering"
+    if str(fe_dir) not in sys.path:
+        sys.path.insert(0, str(fe_dir))
+    cca = joblib.load(fe_dir / "ensemble_J_cca_transformer.joblib")
+    mask = np.load(fe_dir / "ensemble_J_woa_mask.npy")
+    clf = joblib.load(fe_dir / "ensemble_J_final_classifier.joblib")
+    _ensemble_artifacts = (cca, mask, clf)
+    return _ensemble_artifacts
+
+
+def ensemble_status(app_root: Path | None = None) -> ModelInferenceStatus:
+    """4개 모델 앙상블 아티팩트가 준비돼 있는지 확인(로컬 전용 - 이 파일들은
+    BRAINTENSOR 체크아웃에만 있고 git에 커밋되지 않음, Cloud에는 없음)."""
+    root = _braintensor_root(app_root)
+    fe_dir = root / "04_Feature_Engineering"
+    required = ["ensemble_J_cca_transformer.joblib", "ensemble_J_woa_mask.npy", "ensemble_J_final_classifier.joblib"]
+    missing = [name for name in required if not (fe_dir / name).is_file()]
+    ready = not missing
+    message = "앙상블 아티팩트 준비 완료" if ready else f"필요 파일 없음: {', '.join(missing)}"
+    return ModelInferenceStatus(ready, str(fe_dir), message)
+
+
+def run_ensemble_inference(nifti_bytes: bytes, app_root: Path | None = None) -> dict:
+    """[2026-07-28 추가] 4개 모델(CNN Variant3=우리, ResNet=우리, CCA=동료 J,
+    WOA=우리) 앙상블 최종 추론. 확률/예측 클래스는 이 앙상블 분류기 결과를 쓰고,
+    M3d-CAM 시각화는 CNN(Variant3) 자체의 Grad-CAM을 그대로 사용(앙상블 분류기
+    자체는 CCA로 융합된 저차원 특징을 보는 거라 원본 볼륨 공간에 대응되는
+    "이 복셀이 중요하다"는 시각화가 없음 - 표준적인 관행대로 시각적 설명은
+    CNN 쪽에서, 최종 판단은 앙상블에서 가져오는 구조).
+
+    [로컬 전용] 앙상블 아티팩트가 BRAINTENSOR 체크아웃에만 있고 git에 없어
+    Cloud에서는 동작하지 않음 - ensemble_status()로 먼저 확인.
+    """
+    root = _braintensor_root(app_root)
+    cca, mask, clf = _load_ensemble_artifacts(root)
+
+    # CNN(M3d-CAM 시각화용) + fv3/fv4(앙상블 입력용)를 함께 뽑음 - 두 번 추론하지
+    # 않도록 extract_ensemble_features()와 _run_local_inference()의 로직을 합침.
+    local_status = model_inference_status(app_root)
+    if not local_status.ready:
+        raise RuntimeError(f"로컬 CNN 모델이 준비되지 않았습니다: {local_status.message}")
+    cnn_result = _run_local_inference(nifti_bytes, local_status, app_root)
+
+    features = extract_ensemble_features(nifti_bytes, app_root)
+    fv3, fv4 = features["fv3"].reshape(1, -1), features["fv4"].reshape(1, -1)
+    z = cca.transform_fused(fv3, fv4, n_components=10, fusion="concat")
+    probs = clf.predict_proba(z[:, mask])[0]
+    pred_idx = int(np.argmax(probs))
+    pred_label = CLASS_NAMES_ENSEMBLE[pred_idx]
+
+    result = dict(cnn_result)  # cam_views/display_volume 등 시각화 관련 필드는 CNN 결과 그대로 재사용
+    result.update({
+        "normal": round(float(probs[0]) * 100),
+        "prodromal": round(float(probs[1]) * 100),
+        "pd": round(float(probs[2]) * 100),
+        "pred_label": pred_label,
+        "pred_label_kr": CLASS_LABEL_KR.get(pred_label, pred_label),
+        "finding": FINDING_TEMPLATES.get(pred_label, FINDING_TEMPLATES["PD"]),
+        "checkpoint": f"CNN({cnn_result['checkpoint']}) + ResNet(resnet3d_20260722_170643_acc54.3.pt) + CCA(J) + WOA",
+        "is_ensemble": True,
+    })
+    return result
 
 
 _inference_module = None

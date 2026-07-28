@@ -11,7 +11,7 @@ import streamlit as st
 
 from preprocessing_adapter import convert_dicom_folder, inspect_dicom_folder, preprocess_nifti, render_nifti_views, validate_nifti
 from local_pipeline import APP_VERSION, local_pipeline_status, run_local_pipeline
-from model_inference import model_inference_status, run_model_inference
+from model_inference import model_inference_status, run_model_inference, ensemble_status, run_ensemble_inference
 from pdf_report import generate_xai_pdf
 
 
@@ -183,6 +183,7 @@ def xai_report(
     generated_at: str,
     heatmap_src: str | None = None,
     model_connected: bool = False,
+    is_ensemble: bool = False,
 ) -> str:
     logo = data_url(ASSETS / "logo.png")
     heatmap = heatmap_src or data_url(ASSETS / "sample_t2_mri.png")
@@ -195,7 +196,11 @@ def xai_report(
     )
     run_id = prep.get("run_id", "세션 전용")
     if model_connected:
-        model_label = "3D-CNN(Variant3) + M3d-CAM"
+        # [2026-07-28 추가] 4개 모델 앙상블(CNN+ResNet+CCA+WOA)이 실제로 돌았을 때만
+        # 그렇게 표기 - 앙상블 아티팩트가 없는 환경(Cloud 등)에서는 CNN 단독으로
+        # 자동 폴백되므로, 그 경우 라벨도 실제 그대로 "3D-CNN(Variant3)"로 남아야 함
+        # (실제로 안 도는 걸 하는 것처럼 표기하면 허위 표기가 되기 때문).
+        model_label = "3D-CNN(Variant3) + 3D-ResNet + CCA(동료 J) + WOA + M3d-CAM" if is_ensemble else "3D-CNN(Variant3) + M3d-CAM"
         status_class = "model-connected"
         status_text = "모델 연결됨 · 실제 추론 결과"
         status_note = "연구 재현 프로토타입으로, 논문 목표 정확도(93.41%)에 아직 못 미칩니다. 임상 진단 결과가 아닙니다."
@@ -218,7 +223,8 @@ def xai_report(
         <div><b>현재 상태</b><span class="{status_class}">{status_text}<small>{status_note}</small></span></div>
       </div>
       <aside>AI 보조 시스템: ParkinsLens / PACScan v{APP_VERSION}</aside></article></div>
-      <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>{heatmap_caption}</figcaption><img src="{heatmap}"></figure></div></article>
+      <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>{heatmap_caption}</figcaption><img src="{heatmap}"></figure>
+      <div class="cam-legend-light"><span class="hi">병변 가능성<br>높음</span><div class="cam-legend-bar"></div><span class="lo">낮음</span></div></div></article>
       <article><h3>▤ AI 진단 확률 요약</h3>{report_bar('정상', result.normal, '#1556c0')}{report_bar('전구기', result.prodromal, '#ff8c00')}{report_bar('파킨슨병 의심', result.pd, '#e91d2b')}</article>
       <article class="narrative"><strong>AI</strong><div><h3>{narrative_label}</h3><ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되었습니다.</li><li>임상 증상 및 추가 검사와 종합하여 전문의가 최종 판단해야 합니다.</li></ul></div></article>
       <footer>▣ 생성일시　{generated_at} <span>담당 전문의 서명　________________</span></footer></main></section>'''
@@ -441,7 +447,7 @@ st.markdown('''<style>
 .validation{padding:14px;border-left:4px solid #2bdbac;background:#08201f;border-radius:5px;color:#c8eee5;font-size:11px;line-height:1.8}.validation.error{border-color:#ff4150;background:#281018;color:#ffd2d6}.file-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:11px}.file-grid div{padding:9px;background:#071426;border:1px solid #1a3049;border-radius:5px}.file-grid small{display:block;color:#768ba3;font-size:9px}.file-grid b{font-size:11px}
 .tri-view{display:grid;grid-template-columns:minmax(0,2.45fr) minmax(190px,1fr);grid-template-rows:1fr 1fr;min-height:500px;background:#01070e}.tri-view figure{margin:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}.tri-view figure:first-child{grid-row:1/3;border-right:1px solid #21374f}.tri-view figure:nth-child(2){border-bottom:1px solid #21374f}.tri-view figcaption{position:absolute;top:9px;left:10px;background:#061426cc;padding:4px 7px;border-radius:3px;font-size:10px;z-index:2}.tri-view img{width:100%;height:100%;max-height:540px;object-fit:contain;transform-origin:center center;transition:transform .18s ease}.tri-view figure:nth-child(n+2) img{max-height:250px}.tri-view-wrap{display:flex;gap:10px;align-items:stretch}.tri-view-wrap .tri-view{flex:1;min-width:0}.cam-legend{flex:0 0 42px;display:flex;flex-direction:column;align-items:center;padding:10px 2px;background:#061426;border-radius:6px}.cam-legend-bar{width:14px;flex:1;border-radius:7px;margin:8px 0;background:linear-gradient(to top,#1e3cdc 0%,#00c8c8 33%,#ffdc00 66%,#dc1e1e 100%)}.cam-legend-label{font-size:9px;text-align:center;line-height:1.3}.cam-legend-label.hi{color:#ff6b6b}.cam-legend-label.lo{color:#5ec8ff}.qc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.qc{padding:11px;border:1px solid #1c3853;background:#071729;border-radius:6px}.qc small{display:block;color:#7f95ad;font-size:9px}.qc b{font-size:12px}.qc.ok b{color:#3bd6ae}.demo{padding:8px 12px;background:#3b2a08;border:1px solid #8a6718;border-radius:5px;color:#ffd76a;font-size:10px;margin-bottom:9px}
 .prob{margin:10px 0}.prob>div{display:flex;justify-content:space-between;font-size:10px;margin-bottom:5px}.prob i,.rbar i{display:block;height:6px;background:#1c2c40;border-radius:20px;overflow:hidden}.prob em,.rbar em{display:block;height:100%;border-radius:20px}.reason{padding:10px;border:1px solid #263d57;border-radius:5px;color:#b8c7d8;font-size:10px;line-height:1.65}.finding{padding:13px;background:#061426;font-size:14px;line-height:1.6}.warning{padding:12px;background:#2a1017;border-top:1px solid #66232e;color:#ffd3d7;font-size:11px}.warning b{color:#ffe000}
-.report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:150px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:125px;height:125px;max-height:none;object-fit:contain;border-radius:10px;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.model-connected{color:#1f6f4f}.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
+.report{background:#fff;color:#111827;border-radius:8px;overflow:hidden;border:1px solid #b9cce3}.report>header{min-height:150px;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:10px 30px;background:linear-gradient(100deg,#03143c,#001c4f);color:#fff;font-size:27px;font-weight:800;border-bottom:4px solid #238cff}.report header b{color:#2f83ff}.report header span{font-weight:400}.report header img{width:125px;height:125px;max-height:none;object-fit:contain;border-radius:10px;flex:0 0 auto}.report main{padding:20px}.report article{border:1px solid #bfd0e3;border-radius:7px;padding:16px;margin-bottom:14px}.report article h3{margin:0 0 12px;color:#082a66;font-size:19px;line-height:1.35}.report h3 small{font-size:12px}.report-top{display:grid;grid-template-columns:1fr 1.1fr;gap:13px}.report-top article{margin:0}.report dl{display:grid;grid-template-columns:40% 60%;margin:0;font-size:14px;line-height:1.5}.report dt,.report dd{padding:10px;border-bottom:1px dotted #ccd7e4;margin:0}.report dt{font-weight:700;background:#f6f8fb}.report .done{color:#076dde;font-weight:700}.report p{font-size:14px;line-height:1.85;margin:0 0 12px}.report aside{text-align:right;font-size:12px;line-height:1.5}.model-info{border-top:1px solid #d7e1ed;margin-bottom:10px}.model-info>div{display:grid;grid-template-columns:90px 1fr;gap:10px;padding:9px 4px;border-bottom:1px dotted #cbd7e5;font-size:13px;line-height:1.45}.model-info>div>b{color:#173c74}.model-info span{font-weight:600}.model-info span small{display:block;margin-top:3px;color:#56677b;font-size:11px;font-weight:400;line-height:1.5}.model-info .model-demo{color:#a06400}.model-connected{color:#1f6f4f}.compare{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:stretch}.compare figure{margin:0;border:1px solid #c6d5e5;padding:8px;border-radius:6px}.compare figcaption{text-align:center;background:#05265a;color:#fff;border-radius:5px;padding:7px;font-size:13px;font-weight:600}.compare img{width:100%;height:300px;object-fit:contain;background:#02060b}.cam-legend-light{flex:0 0 44px;width:44px;display:flex;flex-direction:column;align-items:center;padding:8px 2px;border:1px solid #c6d5e5;border-radius:6px;background:#f6f8fb}.cam-legend-light .cam-legend-bar{width:14px;flex:1;border-radius:7px;margin:8px 0;background:linear-gradient(to top,#1e3cdc 0%,#00c8c8 33%,#ffdc00 66%,#dc1e1e 100%)}.cam-legend-light .hi,.cam-legend-light .lo{font-size:9px;text-align:center;line-height:1.3;font-weight:600}.cam-legend-light .hi{color:#c0293f}.cam-legend-light .lo{color:#1c6fbf}.rbar{display:grid;grid-template-columns:130px 1fr 52px;gap:12px;align-items:center;padding:8px;font-size:14px}.rbar i{background:#edf0f4}.rbar strong{text-align:right;font-size:16px}.narrative{display:flex;gap:16px}.narrative>strong{width:56px;height:56px;display:flex;align-items:center;justify-content:center;border:3px solid #082a66;border-radius:6px;color:#082a66;font-size:21px;flex:0 0 56px}.narrative ul{font-size:15px;line-height:1.85;margin:0;padding-left:21px}.report footer{border-top:2px solid #0b2d68;padding:12px 10px;display:flex;justify-content:space-between;font-size:13px;line-height:1.5}
 [data-testid="stFileUploader"]{width:100%;min-width:0;background:#071729;border:1px dashed #3779ba;border-radius:7px;padding:3px;color:#eaf4ff!important;overflow:hidden}[data-testid="stFileUploader"] section{width:100%;min-width:0;padding:7px 5px!important;background:#071729!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:7px!important}[data-testid="stFileUploader"] *{color:#dcecff!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stFileUploader"] button{width:100%!important;min-width:0!important;max-width:100%!important;margin:0!important;padding:8px 3px!important;background:#12345b!important;border:1px solid #357abb!important;color:#fff!important;overflow:hidden!important}[data-testid="stFileUploader"] button p{width:100%;font-size:0!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stFileUploader"] button p::after{content:"DICOM 폴더 선택";font-size:10px!important;line-height:1.35;color:#fff!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stFileUploader"] small,[data-testid="stFileUploader"] span:has(+small),[data-testid="stFileUploaderDropzoneInstructions"] small,[data-testid="stFileUploader"] [data-testid="stFileUploaderFileErrorMessage"]{display:none!important}[data-testid="stFileUploaderDropzoneInstructions"]{width:100%;min-width:0;text-align:center}[data-testid="stFileUploaderDropzoneInstructions"] span{color:#dcecff!important;opacity:1!important;font-size:10px!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stWidgetLabel"],[data-testid="stWidgetLabel"] p{color:#dcecff!important;opacity:1!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}.stButton button,.stDownloadButton button{width:100%;padding-left:6px!important;padding-right:6px!important;background:#0d315d;border:1px solid #2478c8;color:#eaf5ff!important}.stButton button p,.stDownloadButton button p{color:#eaf5ff!important;font-size:11px!important;white-space:normal!important;word-break:keep-all!important;overflow-wrap:normal!important}.stButton button[kind="primary"]{background:linear-gradient(90deg,#1265d0,#218cff);font-weight:700}[data-testid="stSegmentedControl"]{background:#061426;border:1px solid #1c3856;border-radius:8px;padding:4px}[data-testid="stSegmentedControl"] label,[data-testid="stSegmentedControl"] p{color:#d9e9fa!important;opacity:1!important;word-break:keep-all!important;overflow-wrap:normal!important}[data-testid="stAlert"] *{color:#dcecff!important}[data-testid="stProgress"] p,[data-testid="stStatusWidget"] *{color:#dcecff!important}.status{text-align:right;color:#34d8ad;font-size:9px;margin:8px}.status.idle{color:#8195ac}.status.ready{color:#58b0ff}.status.demo{color:#ffd76a}.status.error{color:#ff7783}
 .st-key-reset_mri_view{display:flex;justify-content:flex-end;align-items:flex-end;width:100%}.st-key-reset_mri_view button{width:84px!important;height:84px!important;min-width:84px!important;min-height:84px!important;padding:8px!important;border-radius:10px!important}.st-key-reset_mri_view button p{line-height:1.45!important;text-align:center!important}
 .topnav a{display:flex;align-items:center;border-bottom:3px solid transparent;color:#edf5ff;text-decoration:none;font-weight:650}.topnav a:hover{color:#75baff}.topnav a.active{border-color:var(--blue);color:#fff}.demo-notice{padding:10px 14px;margin-bottom:10px;border:1px solid #70561b;border-radius:7px;background:#2b210b;color:#ffd978;font-size:12px}.patient-list{display:flex;flex-direction:column;gap:8px}.patient-card{display:block;padding:11px;border:1px solid #1c3550;border-radius:7px;background:#071526;color:#edf5ff;text-decoration:none;transition:border-color .15s ease,background .15s ease,transform .15s ease}.patient-card:hover{border-color:#278fff;background:#0b223d;transform:translateY(-1px)}.patient-card.selected{border-color:#278fff;background:#0c294b;box-shadow:0 0 0 1px #278fff inset}.patient-card>div{display:flex;justify-content:space-between;gap:8px}.patient-card b{font-size:13px}.patient-card span,.patient-card small{color:#8195ac;font-size:10px}.patient-card small{display:block;margin-top:4px}.patient-card em{display:block;margin-top:8px;color:#6fbcff;font-size:11px;font-style:normal}.patient-profile{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.patient-profile>div{padding:12px;border:1px solid #1b3550;border-radius:6px;background:#071526}.patient-profile small{display:block;margin-bottom:5px;color:#8195ac;font-size:10px}.patient-profile b{font-size:13px}.patient-condition{color:#63b7ff}.history-table{overflow-x:auto}.history-table table{width:100%;border-collapse:collapse;font-size:12px}.history-table th{text-align:left;padding:9px;background:#102640;color:#8eb4da}.history-table td{padding:11px 9px;border-bottom:1px solid #1d334a;color:#d8e5f2}.history-link{display:inline-block;margin:2px 5px 2px 0;padding:5px 7px;border:1px solid #2389e8;border-radius:5px;background:#0b3158;color:#8dccff!important;text-decoration:none;white-space:nowrap;font-size:10px;font-weight:700}.history-link:hover{background:#124b82;color:#fff!important}.history-link.report-link{border-color:#7563df;background:#28225a;color:#c5bcff!important}.history-link.report-link:hover{background:#3c3480;color:#fff!important}.clinical-note{font-size:12px;line-height:1.75}.clinical-note>b{color:#63b7ff}.clinical-note p{color:#c1cfdd}.clinical-note small{color:#71869c}.management-actions>div{padding:9px 0;border-bottom:1px solid #1d334a}.management-actions b,.management-actions span{display:block;font-size:11px}.management-actions span{margin-top:4px;color:#91a6ba}.management-actions .ok-text{color:#34d8ad}
@@ -602,7 +608,15 @@ with center:
             # prep(로컬/Cloud 경량 전처리 어느 쪽이든 output_bytes 동일 형식)이 준비되면
             # 항상 시도 - model_inference.py가 로컬→Cloud(HF Hub) 순으로 알아서 처리.
             try:
-                model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
+                # [2026-07-28 추가] 4개 모델(CNN=우리/ResNet=우리/CCA=동료 J/WOA=우리)
+                # 앙상블을 먼저 시도 - 아티팩트가 로컬 BRAINTENSOR에만 있어(git 미포함)
+                # Cloud에서는 항상 실패하고 CNN 단독으로 자동 폴백됨. model_result에
+                # is_ensemble 플래그가 있어 실제로 뭐가 돌았는지 화면에 정확히 표시 가능
+                # (실제로 안 돈 걸 "4개 모델 결과"라고 속여 표시하지 않기 위함).
+                if ensemble_status(ROOT).ready:
+                    model_result = run_ensemble_inference(prep["output_bytes"], ROOT)
+                else:
+                    model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
                 model_connected = True
                 st.session_state.model_inference_error = None
             except Exception as exc:
@@ -653,12 +667,22 @@ with center:
                 st.info("Streamlit Cloud 경량 전처리 결과입니다. 로컬 실행 시 BRAINTENSOR의 BET·ANTsPy/PD25 정합·Min-Max·56³ 전체 파이프라인을 사용합니다.")
         elif view == ai_tab_label:
             if model_connected and model_result:
+                if model_result.get("is_ensemble"):
+                    # [2026-07-28 추가] 4개 모델 앙상블이 실제로 돌았을 때만 이렇게 표기.
+                    banner_text = (
+                        "✓ 4개 모델 앙상블(3D-CNN Variant3 + 3D-ResNet + CCA(동료 J 구현) + WOA) 추론 결과입니다. "
+                        "다만 WOA 특징선택 적용 후 정확도가 CCA 단독보다 오히려 낮아진 것으로 실측 확인됐고(43.48% vs 50.00%), "
+                        "논문 목표치(93.41%)에도 크게 못 미치는 연구 프로토타입이라 실제 진단 결과로 사용할 수 없습니다."
+                    )
+                else:
+                    banner_text = (
+                        f"✓ 실제 학습된 모델(Variant3, 체크포인트 test accuracy "
+                        f"{round((model_result.get('test_accuracy') or 0) * 100, 1)}%) 추론 결과입니다. "
+                        "다만 이 프로젝트의 논문 재현 정확도가 아직 논문 목표치(93.41%)에 크게 못 미치는 "
+                        "연구 프로토타입이라, 실제 진단 결과로 사용할 수 없습니다."
+                    )
                 st.markdown(
-                    f'<div class="demo" style="background:#e6f2ee;color:#1f4f3d;border-color:#2f6f5e">'
-                    f'✓ 실제 학습된 모델(Variant3, 체크포인트 test accuracy '
-                    f'{round((model_result.get("test_accuracy") or 0) * 100, 1)}%) 추론 결과입니다. '
-                    f'다만 이 프로젝트의 논문 재현 정확도가 아직 논문 목표치(93.41%)에 크게 못 미치는 '
-                    f'연구 프로토타입이라, 실제 진단 결과로 사용할 수 없습니다.</div>',
+                    f'<div class="demo" style="background:#e6f2ee;color:#1f4f3d;border-color:#2f6f5e">{banner_text}</div>',
                     unsafe_allow_html=True,
                 )
                 # [2026-07-28 추가] 예측 클래스 하나의 확률만 보여주던 걸 정상/전구기/
@@ -711,6 +735,7 @@ with center:
                 report_generated_at,
                 heatmap_src=heatmap_src,
                 model_connected=model_connected,
+                is_ensemble=bool(model_connected and model_result and model_result.get("is_ensemble")),
             )
             st.markdown(html, unsafe_allow_html=True)
             pdf_bytes = generate_xai_pdf(
@@ -725,6 +750,7 @@ with center:
                 assets_dir=ASSETS,
                 heatmap_src=heatmap_src,
                 model_connected=model_connected,
+                is_ensemble=bool(model_connected and model_result and model_result.get("is_ensemble")),
             )
             safe_exam_date = report_exam_date.replace(".", "")
             st.download_button(
