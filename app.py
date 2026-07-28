@@ -542,8 +542,14 @@ with center:
             try:
                 model_result = run_model_inference(prep["output_bytes"], ROOT, prep.get("cam_overlay_bytes"))
                 model_connected = True
+                st.session_state.model_inference_error = None
             except Exception as exc:
-                st.info(f"실제 AI 모델 추론을 사용할 수 없어 시연용 결과를 표시합니다: {exc}")
+                # [2026-07-28 추가] 이전엔 st.info()로만 잠깐 보여주고 바로 st.rerun()
+                # 하는 흐름이라, 사용자가 데모로 폴백된 실제 이유를 확인할 방법이 없었음
+                # (사용자가 "AI 분석에 실제 파일이 아니라 데모가 나온다"고 계속 보고했는데
+                # 원인 파악이 안 됐던 이유). session_state에 남겨서 데모 화면에 계속 표시.
+                import traceback
+                st.session_state.model_inference_error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
 
             st.session_state.prep = prep
             st.session_state.model_result = model_result
@@ -603,6 +609,12 @@ with center:
                 )
             else:
                 st.markdown('<div class="demo">⚠ 모델 학습 완료 전 디자인 확인용 시연 결과입니다. 실제 진단 결과가 아닙니다.</div>', unsafe_allow_html=True)
+                inference_error = st.session_state.get("model_inference_error")
+                if inference_error:
+                    # [2026-07-28 추가] 실제 모델 추론이 실패해서 데모로 폴백된 이유를
+                    # 화면에 남김 - 이전엔 st.info()가 rerun 직후 사라져서 원인 확인 불가.
+                    with st.expander("⚠ 실제 모델 연결 실패 - 왜 데모로 표시되는지 보기"):
+                        st.code(inference_error)
                 demo_views = [data_url(ASSETS / "sample_t2_mri.png"), data_url(ASSETS / "coronal_result.png"), data_url(ASSETS / "sagittal_result.png")]
                 st.markdown(viewer_html(demo_views, "AI 병변 시각화", "M3d-CAM 시연용"), unsafe_allow_html=True)
                 st.markdown(f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
