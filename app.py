@@ -111,6 +111,61 @@ def interactive_mri_viewer(prep: dict, source: str) -> str:
     return viewer_html(views, title, badge, zoom_percent)
 
 
+def reset_cam_view() -> None:
+    for label in ("축상면", "관상면", "시상면"):
+        st.session_state[f"cam_{label}_position"] = 50
+    st.session_state["cam_zoom"] = 100
+
+
+def interactive_cam_viewer(model_result: dict) -> str:
+    """[2026-07-28 추가] "위치 조절" 없이 가운데 슬라이스 3장만 고정으로 보여주던
+    AI 분석 탭에도 원본 MRI/전처리 결과 탭과 동일한 위치·확대 슬라이더를 붙임 -
+    interactive_mri_viewer()와 같은 패턴이지만, NIfTI 파일을 다시 읽는 대신
+    model_inference.render_cam_overlay()로 이미 메모리에 있는 CAM 배열을 재슬라이싱함
+    (모델을 다시 돌리지 않아 빠름)."""
+    from model_inference import render_cam_overlay
+
+    shape = model_result["display_volume"].shape
+    labels = ("축상면", "관상면", "시상면")
+    axes = (2, 1, 0)
+    sizes = (shape[2], shape[1], shape[0])
+    control_columns = st.columns(3, gap="small")
+    positions = []
+    for column, label, size in zip(control_columns, labels, sizes):
+        with column:
+            positions.append(
+                st.slider(
+                    f"{label} 연동 위치 (%)",
+                    min_value=0,
+                    max_value=100,
+                    value=50,
+                    key=f"cam_{label}_position",
+                )
+            )
+    zoom_column, reset_column = st.columns([4, 1], gap="small")
+    with zoom_column:
+        zoom_percent = st.slider(
+            "영상 확대·축소 (%)",
+            min_value=50,
+            max_value=250,
+            value=100,
+            step=10,
+            key="cam_zoom",
+        )
+    with reset_column:
+        st.button("↺ 보기 초기화", key="reset_cam_view", on_click=reset_cam_view)
+    indices = [relative_slice_index(size, position) for size, position in zip(sizes, positions)]
+    views = [
+        render_cam_overlay(model_result, axis, index)
+        for axis, index in zip(axes, indices)
+    ]
+    position_badge = " · ".join(
+        f"{label} {index + 1}/{size} ({position}%)"
+        for label, index, size, position in zip(labels, indices, sizes, positions)
+    )
+    return viewer_html(views, "AI 병변 시각화", f"Grad-CAM · {position_badge} · 확대 {zoom_percent}%", zoom_percent)
+
+
 def xai_report(
     result: Result,
     original_src: str,
@@ -599,7 +654,8 @@ with center:
                     f'연구 프로토타입이라, 실제 진단 결과로 사용할 수 없습니다.</div>',
                     unsafe_allow_html=True,
                 )
-                st.markdown(viewer_html(model_result["cam_views"], "AI 병변 시각화", "Grad-CAM"), unsafe_allow_html=True)
+                st.markdown('<div class="viewer-guide">슬라이더로 축상면/관상면/시상면 위치와 확대 배율을 조절할 수 있습니다.</div>', unsafe_allow_html=True)
+                st.markdown(interactive_cam_viewer(model_result), unsafe_allow_html=True)
                 st.markdown(
                     f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div>'
                     f'<div class="finding">{result.finding}</div>'

@@ -177,7 +177,7 @@ def _jet_like(gray: np.ndarray) -> np.ndarray:
 
 def _overlay_slice_png(
     volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.75,
-    cam_floor: float = 0.0,
+    cam_floor: float = 0.0, index: int | None = None,
 ) -> str:
     """[2026-07-28 수정] 실측 확인 결과, 이 모델(Variant3, 212개 샘플로만 학습)의
     Grad-CAM은 흑질처럼 좁은 부위가 아니라 뇌 전체에 걸쳐 넓게 반응함(중앙값 0.35~0.4,
@@ -187,7 +187,9 @@ def _overlay_slice_png(
     강하게 반응한 영역만 도드라지게 함 - 신호 자체를 바꾸는 게 아니라 "상대적으로
     어디가 더 강한지"를 시각적으로 알아보기 쉽게 강조하는 것뿐(percentile 임계값은
     이 볼륨 자체의 분포에서 계산 - 절대적인 "이 부위가 흑질이다" 판정이 아님)."""
-    index = volume.shape[axis] // 2
+    if index is None:
+        index = volume.shape[axis] // 2
+    index = max(0, min(index, volume.shape[axis] - 1))
     base = np.rot90(np.take(volume, index, axis=axis))
     heat = np.rot90(np.take(cam, index, axis=axis))
     lo, hi = float(base.min()), float(base.max())
@@ -296,4 +298,20 @@ def _run_local_inference(
         "cam_views": cam_views,
         "checkpoint": ckpt_path.name,
         "test_accuracy": ckpt_meta.get("test_accuracy"),
+        # [2026-07-28 추가] AI 분석 탭에 위치/확대 슬라이더를 붙이기 위해 원본
+        # 배열도 함께 반환 - render_cam_overlay()가 이걸로 다른 슬라이스를 다시 그림.
+        "display_volume": display_volume,
+        "display_cam": display_cam,
+        "cam_floor": cam_floor,
     }
+
+
+def render_cam_overlay(model_result: dict, axis: int, index: int) -> str:
+    """[2026-07-28 추가] AI 분석 탭의 위치 슬라이더용 - run_model_inference()가
+    반환한 display_volume/display_cam으로 임의 슬라이스를 다시 렌더링한다.
+    로컬/Cloud 어느 경로든 이 함수(model_inference.py의 _overlay_slice_png) 하나로
+    처리 가능 - 렌더링 로직 자체는 두 경로가 동일해서 cloud_model을 따로 부를 필요 없음."""
+    return _overlay_slice_png(
+        model_result["display_volume"], model_result["display_cam"], axis,
+        cam_floor=model_result["cam_floor"], index=index,
+    )

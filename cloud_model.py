@@ -220,13 +220,15 @@ def _jet_like(gray: np.ndarray) -> np.ndarray:
 
 def _overlay_slice_png(
     volume: np.ndarray, cam: np.ndarray, axis: int, cam_alpha_max: float = 0.75,
-    cam_floor: float = 0.0,
+    cam_floor: float = 0.0, index: int | None = None,
 ) -> str:
     """[2026-07-28 수정] model_inference.py와 동일한 수정 - 실측 확인 결과 이 모델의
     Grad-CAM이 뇌 전체에 넓게 반응해서(중앙값 0.35~0.4) 선형 alpha로는 뇌 전체가
     칠해진 것처럼 보임. cam_floor(호출부에서 이 볼륨의 상위 percentile로 계산)보다
     낮은 값은 거의 안 보이게 눌러 상대적으로 가장 강한 영역만 강조."""
-    index = volume.shape[axis] // 2
+    if index is None:
+        index = volume.shape[axis] // 2
+    index = max(0, min(index, volume.shape[axis] - 1))
     base = np.rot90(np.take(volume, index, axis=axis))
     heat = np.rot90(np.take(cam, index, axis=axis))
     lo, hi = float(base.min()), float(base.max())
@@ -298,4 +300,9 @@ def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = 
         "cam_views": cam_views,
         "checkpoint": f"{HF_REPO_ID}/{HF_CHECKPOINT_FILENAME} (Hugging Face Hub)",
         "test_accuracy": checkpoint.get("test_accuracy"),
+        # [2026-07-28 추가] model_inference.render_cam_overlay()가 재사용 - AI 분석
+        # 탭 위치 슬라이더용. local/Cloud 어느 경로든 같은 키 이름으로 반환.
+        "display_volume": display_volume,
+        "display_cam": display_cam,
+        "cam_floor": cam_floor,
     }
