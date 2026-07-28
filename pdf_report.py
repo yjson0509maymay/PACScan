@@ -224,6 +224,11 @@ def generate_xai_pdf(
         )
         model_line = "<b>모델</b>　3D-CNN(Variant3) + 3D-ResNet + CCA(동료 J) + WOA + M3d-CAM"
         status_line = "<b>현재 상태</b>　모델 연결됨 · 4개 모델 앙상블 추론 결과"
+        if not full_pipeline:
+            summary_text += (
+                " 또한 Cloud 환경은 두개골 제거(BET)가 적용되지 않아 학습 때와 다른 형태의 "
+                "입력이 들어가므로, 로컬 실행보다 정확도가 낮아질 수 있습니다."
+            )
     elif model_connected:
         summary_text = (
             "본 보고서는 전처리 결과와 실제 학습된 모델(Variant3)의 추론 결과를 바탕으로 자동 생성되었습니다. "
@@ -232,6 +237,13 @@ def generate_xai_pdf(
         )
         model_line = "<b>모델</b>　3D-CNN(Variant3) + M3d-CAM"
         status_line = "<b>현재 상태</b>　모델 연결됨 · 실제 추론 결과"
+        if not full_pipeline:
+            # [2026-07-29 추가] Cloud 경량 전처리는 FSL(BET) 설치 불가로 두개골 제거를
+            # 못 함 - 모델은 두개골 제거된 이미지로 학습돼서 입력 분포가 달라짐을 명시.
+            summary_text += (
+                " 또한 Cloud 환경은 두개골 제거(BET)가 적용되지 않아 학습 때와 다른 형태의 "
+                "입력이 들어가므로, 로컬 실행보다 정확도가 낮아질 수 있습니다."
+            )
     else:
         summary_text = (
             "본 보고서는 전처리 결과와 현재 시연용 AI 결과를 바탕으로 자동 생성되었습니다. "
