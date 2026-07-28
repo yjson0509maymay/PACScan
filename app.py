@@ -163,7 +163,7 @@ def interactive_cam_viewer(model_result: dict) -> str:
         f"{label} {index + 1}/{size} ({position}%)"
         for label, index, size, position in zip(labels, indices, sizes, positions)
     )
-    return viewer_html(views, "AI 병변 시각화", f"Grad-CAM · {position_badge} · 확대 {zoom_percent}%", zoom_percent)
+    return viewer_html(views, "AI 병변 시각화", f"M3d-CAM · {position_badge} · 확대 {zoom_percent}%", zoom_percent)
 
 
 def xai_report(
@@ -188,11 +188,11 @@ def xai_report(
     )
     run_id = prep.get("run_id", "세션 전용")
     if model_connected:
-        model_label = "3D-CNN(Variant3) + Grad-CAM"
+        model_label = "3D-CNN(Variant3) + M3d-CAM"
         status_class = "model-connected"
         status_text = "모델 연결됨 · 실제 추론 결과"
         status_note = "연구 재현 프로토타입으로, 논문 목표 정확도(93.41%)에 아직 못 미칩니다. 임상 진단 결과가 아닙니다."
-        heatmap_caption = "AI 분석 결과 (Grad-CAM 히트맵)"
+        heatmap_caption = "AI 분석 결과 (M3d-CAM 히트맵)"
         narrative_label = "핵심 판독 요약 <small>(예측 클래스 기반 템플릿 문구)</small>"
     else:
         model_label = "3D-CNN + 3D-ResNet"
@@ -202,7 +202,7 @@ def xai_report(
         heatmap_caption = "AI 분석 결과 (시연용 히트맵)"
         narrative_label = "핵심 판독 요약 <small>(RAG/LLM 기반 시연용)</small>"
     return f'''<section class="report">
-      <header><div>NeuroLens <b>XAI</b> <span>분석 보고서</span></div><img src="{logo}"></header>
+      <header><div>ParkinsLens <b>XAI</b> <span>분석 보고서</span></div><img src="{logo}"></header>
       <main><div class="report-top"><article><h3>♙ 환자 정보</h3><dl><dt>환자 ID</dt><dd>{patient_id}</dd><dt>검사일</dt><dd>{exam_date}</dd><dt>검사 유형</dt><dd>T2 MRI</dd><dt>판독 상태</dt><dd class="done">자동 생성 완료</dd></dl></article>
       <article><h3>▣ AI 모델 <small>(분석 구성 및 현재 상태)</small></h3>
       <div class="model-info">
@@ -210,7 +210,7 @@ def xai_report(
         <div><b>모델</b><span>{model_label}<small>다중 시점 어텐션 · M3d-CAM 설명 시각화</small></span></div>
         <div><b>현재 상태</b><span class="{status_class}">{status_text}<small>{status_note}</small></span></div>
       </div>
-      <aside>AI 보조 시스템: NeuroLens / PACScan v{APP_VERSION}</aside></article></div>
+      <aside>AI 보조 시스템: ParkinsLens / PACScan v{APP_VERSION}</aside></article></div>
       <article class="visual"><h3>▥ XAI 시각화 <small>(M3d-CAM)</small></h3><div class="compare"><figure><figcaption>원본 MRI (T2)</figcaption><img src="{original_src}"></figure><figure><figcaption>{heatmap_caption}</figcaption><img src="{heatmap}"></figure></div></article>
       <article><h3>▤ AI 진단 확률 요약</h3>{report_bar('정상', result.normal, '#1556c0')}{report_bar('전구기', result.prodromal, '#ff8c00')}{report_bar('파킨슨병 의심', result.pd, '#e91d2b')}</article>
       <article class="narrative"><strong>AI</strong><div><h3>{narrative_label}</h3><ul><li>{result.finding}</li><li>파킨슨병 의심 확률이 {result.pd}%로 분석되었습니다.</li><li>임상 증상 및 추가 검사와 종합하여 전문의가 최종 판단해야 합니다.</li></ul></div></article>
@@ -424,7 +424,7 @@ def open_selected_patient_analysis() -> None:
     st.query_params["patient"] = st.session_state["selected_patient_id"]
 
 
-st.set_page_config(page_title="NeuroLens | T2 MRI 분석", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="ParkinsLens | T2 MRI 분석", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 st.markdown('''<style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Inter:wght@400;600;700&display=swap');
 :root{--bg:#030b16;--panel:#0a182a;--line:#1d324a;--blue:#218cff;--text:#edf5ff;--muted:#8195ac}*{box-sizing:border-box;font-family:Inter,'Noto Sans KR',sans-serif;word-break:keep-all!important;overflow-wrap:normal!important;hyphens:none!important}.stApp{background:radial-gradient(circle at 45% -10%,#10294b,#030b16 42%);color:var(--text)}[data-testid="stHeader"],#MainMenu,footer,[data-testid="stToolbar"]{display:none!important}.block-container{max-width:1600px;padding:.6rem .8rem 2rem}[data-testid="stHorizontalBlock"],[data-testid="stColumn"]{min-width:0!important}
@@ -466,7 +466,7 @@ meta = (
 )
 st.markdown(
     f'<header class="topbar"><div class="brand"><img src="{logo}"><span><b>MRI</b> 분석 대시보드</span></div>'
-    f'<nav class="topnav"><a class="{analysis_active}" href="?page=analysis&patient={selected_patient_id}">뉴로렌즈(AI) 분석 결과</a>'
+    f'<nav class="topnav"><a class="{analysis_active}" href="?page=analysis&patient={selected_patient_id}">파킨스렌즈(AI) 분석 결과</a>'
     f'<a class="{patients_active}" href="?page=patients&patient={selected_patient_id}">환자관리</a></nav><div class="meta">{meta}</div></header>',
     unsafe_allow_html=True,
 )
@@ -560,7 +560,7 @@ with center:
                     st.error(f"실제 전처리 실패: {exc}")
                     st.exception(exc)
                     st.stop()
-                progress.progress(94, text="AI 모델 추론(Variant3 + Grad-CAM)")
+                progress.progress(94, text="AI 모델 추론(Variant3 + M3d-CAM)")
             elif Path(local_status.script).is_file():
                 st.error(f"실제 전처리 환경이 아직 완성되지 않았습니다. {local_status.message}")
                 st.stop()
@@ -657,7 +657,7 @@ with center:
                 st.markdown('<div class="viewer-guide">슬라이더로 축상면/관상면/시상면 위치와 확대 배율을 조절할 수 있습니다.</div>', unsafe_allow_html=True)
                 st.markdown(interactive_cam_viewer(model_result), unsafe_allow_html=True)
                 st.markdown(
-                    f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div>'
+                    f'<section class="panel"><div class="head"><span>▤</span>파킨스렌즈(AI) 판독 소견</div>'
                     f'<div class="finding">{result.finding}</div>'
                     f'<div class="warning"><b>{model_result["pred_label_kr"]} 확률({result.pd if model_result["pred_label"]=="PD" else (result.prodromal if model_result["pred_label"]=="Prodromal" else result.normal)}%)</b> '
                     f'· 실제 모델 추론 결과(체크포인트: {model_result["checkpoint"]})</div></section>',
@@ -673,7 +673,7 @@ with center:
                         st.code(inference_error)
                 demo_views = [data_url(ASSETS / "sample_t2_mri.png"), data_url(ASSETS / "coronal_result.png"), data_url(ASSETS / "sagittal_result.png")]
                 st.markdown(viewer_html(demo_views, "AI 병변 시각화", "M3d-CAM 시연용"), unsafe_allow_html=True)
-                st.markdown(f'<section class="panel"><div class="head"><span>▤</span>뉴로렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
+                st.markdown(f'<section class="panel"><div class="head"><span>▤</span>파킨스렌즈(AI) 판독 소견</div><div class="finding">{result.finding}</div><div class="warning"><b>파킨슨병 의심 확률({result.pd}%)</b> · 모델 연결 전 시연용 수치입니다.</div></section>', unsafe_allow_html=True)
         else:
             original_src = prep["original_views"][0]
             heatmap_src = model_result["cam_views"][0] if (model_connected and model_result) else None

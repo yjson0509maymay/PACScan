@@ -182,7 +182,7 @@ def generate_xai_pdf(
             "논문 재현 목표 정확도(93.41%)에 아직 못 미치는 연구 프로토타입으로, "
             "최종 판독과 진단은 담당 전문의의 임상적 판단을 우선합니다."
         )
-        model_line = "<b>모델</b>　3D-CNN(Variant3) + Grad-CAM"
+        model_line = "<b>모델</b>　3D-CNN(Variant3) + M3d-CAM"
         status_line = "<b>현재 상태</b>　모델 연결됨 · 실제 추론 결과"
     else:
         summary_text = (
@@ -231,7 +231,7 @@ def generate_xai_pdf(
         height=67 * mm,
         kind="proportional",
     )
-    heatmap_caption = "AI 분석 결과 (Grad-CAM 히트맵)" if model_connected else "AI 분석 결과 (시연용 히트맵)"
+    heatmap_caption = "AI 분석 결과 (M3d-CAM 히트맵)" if model_connected else "AI 분석 결과 (시연용 히트맵)"
     image_table = Table(
         [
             [Paragraph("<b>원본 MRI (T2)</b>", center), Paragraph(f"<b>{heatmap_caption}</b>", center)],

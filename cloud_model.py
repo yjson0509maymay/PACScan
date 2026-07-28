@@ -294,7 +294,7 @@ def run_cloud_inference(nifti_bytes: bytes, overlay_nifti_bytes: bytes | None = 
         "prodromal": round(float(probs[1]) * 100),
         "pd": round(float(probs[2]) * 100),
         "finding": FINDING_TEMPLATES.get(pred_label, FINDING_TEMPLATES["PD"]),
-        "rationale": "흑질(Substantia Nigra) 영역을 포함한 판단 기여 영역(Grad-CAM)이 모델 예측에 크게 기여했습니다.",
+        "rationale": "흑질(Substantia Nigra) 영역을 포함한 판단 기여 영역(M3d-CAM)이 모델 예측에 크게 기여했습니다.",
         "pred_label": pred_label,
         "pred_label_kr": CLASS_LABEL_KR.get(pred_label, pred_label),
         "cam_views": cam_views,

@@ -292,7 +292,7 @@ def _run_local_inference(
         "prodromal": round(probs["Prodromal"] * 100),
         "pd": round(probs["PD"] * 100),
         "finding": FINDING_TEMPLATES.get(pred_label, FINDING_TEMPLATES["PD"]),
-        "rationale": "흑질(Substantia Nigra) 영역을 포함한 판단 기여 영역(Grad-CAM)이 모델 예측에 크게 기여했습니다.",
+        "rationale": "흑질(Substantia Nigra) 영역을 포함한 판단 기여 영역(M3d-CAM)이 모델 예측에 크게 기여했습니다.",
         "pred_label": pred_label,
         "pred_label_kr": CLASS_LABEL_KR.get(pred_label, pred_label),
         "cam_views": cam_views,
